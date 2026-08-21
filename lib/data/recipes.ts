@@ -37,6 +37,7 @@ const fullInclude = {
   stages: {
     orderBy: { seq: "asc" as const },
     include: {
+      outputMaterial: true,
       subStages: { orderBy: { seq: "asc" as const } },
       bomLines: { orderBy: { bomId: "asc" as const }, include: { material: true } },
     },

@@ -12,7 +12,7 @@ function meta(pathname: string): { crumb: string; title: string } {
   if (pathname.startsWith("/lims")) return { crumb: "Assayline LIMS / Quality control", title: "In-Process Control — Hold Points" };
   if (/^\/orders\/[^/]+/.test(pathname)) {
     const no = decodeURIComponent(pathname.split("/")[2] ?? "");
-    return { crumb: "Pathline ERP / Orders", title: `Order ${no}` };
+    return { crumb: "Pathline ERP / Orders", title: `${no}` };
   }
   return { crumb: "Pathline ERP", title: "Process orders" };
 }
@@ -36,11 +36,8 @@ export function Topbar() {
           <span className="flex items-center gap-[7px]">
             <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-amber" />
             <span className="text-[11.5px] font-semibold text-amber-deep">Batchline</span>
-            <span className="text-[10.5px] text-faint">Plant</span>
+            <span className="text-[10.5px] text-faint">EBR</span>
           </span>
-        </div>
-        <div className="flex h-[34px] w-[34px] items-center justify-center rounded-full border border-[#e0d3bf] bg-[#efe4d3] text-[12px] font-semibold text-espresso-ink">
-          PL
         </div>
       </div>
     </header>

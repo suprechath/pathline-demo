@@ -28,7 +28,7 @@ function Icon({ spec }: { spec: string }) {
 export function Sidebar() {
   const pathname = usePathname();
   return (
-    <aside className="flex w-[236px] flex-none flex-col bg-gradient-to-b from-espresso-deep to-espresso py-6 text-[#efe4d3]">
+    <aside className="flex w-[236px] flex-none flex-col bg-gradient-to-b from-espresso-deep to-espresso py-6">
       <div className="flex items-center gap-3 px-6 pb-6">
         <div className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-[9px] bg-[#efe4d3]">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4a3222" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
@@ -36,7 +36,7 @@ export function Sidebar() {
           </svg>
         </div>
         <div>
-          <div className="text-[15px] font-bold leading-none tracking-[.2px]">Pathline</div>
+          <div className="text-[15px] font-bold leading-none tracking-[.2px] text-[#efe4d3]">Pathline</div>
           <div className="mt-[3px] text-[10.5px] uppercase tracking-[2.4px] text-[#c3ad8f]">ERP</div>
         </div>
       </div>
@@ -52,8 +52,8 @@ export function Sidebar() {
               href={n.href}
               style={accentActive ? { background: "rgba(124,77,255,.24)" } : undefined}
               className={`flex items-center gap-3 rounded-[9px] px-[13px] py-[10px] text-[13.5px] font-medium ${
-                active ? "text-white" : "text-[#d9c8ae] hover:bg-amber/10"
-              } ${active && !n.accent ? "bg-amber/20" : ""}`}
+                active ? "text-black" : "text-[#d9c8ae] hover:bg-amber/50"
+              } ${active && !n.accent ? "bg-amber/100" : ""}`}
             >
               <span className="flex h-[18px] w-[18px] flex-none" style={n.accent ? { color: active ? "#c9b6ff" : "#b39ff0" } : undefined}><Icon spec={n.icon} /></span>
               {n.label}
@@ -62,14 +62,6 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="mx-3 border-t border-[#efe4d3]/[.13] px-5 pt-3.5">
-        <div className="mb-2 text-[10px] uppercase tracking-[1.6px] text-[#a68f70]">Environment</div>
-        <div className="flex items-center gap-2 text-[12px] text-[#d9c8ae]">
-          <span className="h-2 w-2 flex-none rounded-full bg-[#8fae5b]" />
-          <span className="font-mono">localhost:5432</span>
-        </div>
-        <div className="mt-[5px] pl-4 text-[11px] text-[#a68f70]">Postgres 16 · Docker</div>
-      </div>
     </aside>
   );
 }
