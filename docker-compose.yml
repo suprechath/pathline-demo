@@ -1,0 +1,31 @@
+# Local Postgres only — the Next.js app runs on the host with `npm run dev`.
+services:
+  db:
+    image: postgres:16
+    container_name: pathline-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: pathline
+    ports:
+      - "5432:5432"
+    # volumes:
+    #   - pathline_pgdata:/var/lib/postgresql/data
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready -U pathline -d pathline"]
+    #   interval: 5s
+    #   timeout: 5s
+    #   retries: 5
+
+  adminer:
+    image: adminer:latest
+    container_name: pathline-adminer
+    restart: unless-stopped
+    ports:
+      - "9000:8080" # Access Adminer on http://localhost:9000
+    depends_on:
+      - db
+
+# volumes:
+#   pathline_pgdata:

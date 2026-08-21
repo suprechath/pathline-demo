@@ -1,0 +1,436 @@
+// Pathline ERP — Batchline integration demo
+// PostgreSQL schema (Prisma)
+//
+// Design notes
+// - Surrogate cuid() primary keys; business keys (materialId, lotId, orderNo,
+//   batchId) are kept as unique columns because they appear in Batchline payloads.
+// - Quantities use Decimal(15,7): Batchline allows up to 8 integer + 7 decimal places.
+// - Order is a real hierarchy: ProcessOrder -> Stage -> BomLine -> LotAssignment.
+// - Execution is an append-only event stream that mirrors the two webhook feeds
+//   (batch_status.update and EBR Data Outbound / instruction.updated).
+// - Business rules that a relational DB cannot express (e.g. a BOM line's assigned
+//   lot quantities must SUM to the BOM quantity) are enforced in the app layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum MaterialType {
+  RAW
+  INTERMEDIATE
+  PRODUCT
+}
+
+enum ShelfLifeUom {
+  YEARS
+  MONTHS
+  DAYS
+  HOURS
+  MINUTES
+}
+
+enum LotStatus {
+  IN_STOCK
+  RESERVED
+  CONSUMED
+  EXPIRED
+  REJECTED
+  QUARANTINE
+}
+
+// Reason captured on every stock movement (signed ledger).
+enum MovementReason {
+  RECEIPT // + goods receipt of a lot
+  SALE_DISPATCH // - sale / dispatch
+  QC_SAMPLE // - QC / QA sample pull
+  SCRAP // - scrap / write-off
+  REJECTION // - rejection
+  ADJUSTMENT // +/- stock adjustment
+  QUARANTINE // - moved to quarantine
+  QC_RELEASE // + quarantine released back to stock
+  RESERVE // 0 on-hand; commits qty to an order (available drops)
+  RELEASE // 0 on-hand; releases a prior reservation
+  ISSUE_TO_ORDER // - consumed by a process order
+}
+
+enum OrderStatus {
+  DRAFT
+  PLANNED // saved and/or sent to Batchline, not yet started
+  STARTED
+  COMPLETED // batch finished, pending review
+  REVIEWED // reviewed & closed; finished goods available in inventory
+  CANCELLED
+}
+
+// Lifecycle of a master recipe.
+enum RecipeStatus {
+  DRAFT
+  APPROVED
+}
+
+// Which Batchline message mode this order is sent with.
+enum SendMode {
+  EBR_CENTRIC
+  RECIPE_NO_LOTS
+  RECIPE_WITH_LOTS
+}
+
+// Execution event source — maps to the webhook topics.
+enum EventKind {
+  BATCH_STATUS // topic: batch_status.update
+  INSTRUCTION // topic: instruction.updated (EBR outbound)
+  EXCEPTION // instruction.updated with has_exception = true
+}
+
+enum MessageDirection {
+  OUTBOUND // Pathline -> Batchline (REST call)
+  INBOUND // Batchline -> Pathline (webhook)
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  RECEIVED
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────────
+// Master data
+// ─────────────────────────────────────────────────────────────
+
+model Material {
+  id           String       @id @default(cuid())
+  materialId   String       @unique // business key, e.g. "PARA-500" (<=20 chars)
+  name         String // <=100 chars
+  type         MaterialType
+  uom          String // unit of measure, <=10 chars, e.g. "kg"
+  shelfLife    Int          @default(0) // RAW = 0; INTERMEDIATE/PRODUCT = positive int
+  shelfLifeUom ShelfLifeUom @default(YEARS)
+  active       Boolean      @default(true)
+  reason       String? // reason captured on activate/deactivate
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // A material can be: physical stock (lots), an order's target product,
+  // a BOM component, and a stage's target material.
+  lots           Lot[]
+  ordersAsTarget ProcessOrder[] @relation("OrderProduct")
+  bomLines       BomLine[]
+  stagesAsTarget Stage[]        @relation("StageTargetMaterial")
+  recipesAsProduct  Recipe[]      @relation("RecipeProduct")
+  recipeStagesAsOutput RecipeStage[] @relation("RecipeStageOutput")
+  recipeBomLines    RecipeBomLine[]
+
+  @@index([type])
+  @@map("materials")
+}
+
+model Lot {
+  id       String    @id @default(cuid())
+  lotId    String    @unique // business key, e.g. "LOT-LACT-0091" (<=20 chars)
+  quantity Decimal   @db.Decimal(15, 7)
+  uom      String
+  location String? // warehouse / rack, e.g. "WH-A / R04"
+  expiry   DateTime?
+  status   LotStatus @default(IN_STOCK)
+
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+
+  assignments LotAssignment[]
+  movements   StockMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([materialId])
+  @@index([status])
+  @@map("lots")
+}
+
+// Signed inventory ledger. On-hand for a lot is derived as the sum of its
+// movement quantities (a RECEIPT is positive; issues are negative), never
+// stored as a standalone column.
+model StockMovement {
+  id       String         @id @default(cuid())
+  reason   MovementReason
+  quantity Decimal        @db.Decimal(15, 7) // signed: + receipt, - issue
+  note     String? // customer, scrap location, or free text
+  user     String? // who performed it
+
+  lotId String
+  lot   Lot    @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([lotId, createdAt])
+  @@map("stock_movements")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Process orders  (Order -> Stage -> BomLine -> LotAssignment)
+// ─────────────────────────────────────────────────────────────
+
+model ProcessOrder {
+  id        String  @id @default(cuid())
+  orderNo   String  @unique // business key / process_number, e.g. "PO-2042"
+  batchId   String? @unique // assigned on send, e.g. "PARA-500_1"
+  erpRecipeId String? // maps to a Batchline product spec id
+  recipeId    String? // the master Recipe this order was instantiated from
+  recipe      Recipe? @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+
+  size      Decimal  @db.Decimal(15, 7)
+  uom       String
+  planStart DateTime
+  planEnd   DateTime
+
+  status   OrderStatus @default(DRAFT)
+  sent     Boolean     @default(false)
+  // True when every BOM line's lot assignments sum exactly to the line quantity.
+  // Recomputed on each assignment change; gates "Send to Batchline".
+  readyToSend Boolean  @default(false)
+  sendMode SendMode    @default(RECIPE_WITH_LOTS)
+
+  // Yield, filled when the batch completes (from webhook data).
+  yieldPlan   Decimal? @db.Decimal(15, 7)
+  yieldActual Decimal? @db.Decimal(15, 7)
+
+  // Target product (type PRODUCT or INTERMEDIATE, must be active).
+  productMaterialId String
+  productMaterial   Material @relation("OrderProduct", fields: [productMaterialId], references: [id], onDelete: Restrict)
+
+  stages   Stage[]
+  events   ExecutionEvent[]
+  messages IntegrationMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([productMaterialId])
+  @@map("process_orders")
+}
+
+model Stage {
+  id       String  @id @default(cuid())
+  name     String // e.g. "Blending"
+  seq      Int     @default(0)
+  targetSize Decimal? @db.Decimal(15, 7)
+
+  orderId String
+  order   ProcessOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  targetMaterialId String?
+  targetMaterial   Material? @relation("StageTargetMaterial", fields: [targetMaterialId], references: [id], onDelete: SetNull)
+
+  bomLines BomLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@map("stages")
+}
+
+model BomLine {
+  id       String  @id @default(cuid())
+  bomId    String // BOM variable name, e.g. "BOM-API-PARA"
+  quantity Decimal @db.Decimal(15, 7) // required quantity; lot assignments must sum to this
+  uom      String
+
+  stageId String
+  stage   Stage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+
+  assignments LotAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([stageId, bomId])
+  @@index([materialId])
+  @@map("bom_lines")
+}
+
+// Junction: which lot(s), and how much of each, satisfy a BOM line.
+model LotAssignment {
+  id       String  @id @default(cuid())
+  quantity Decimal @db.Decimal(15, 7)
+
+  bomLineId String
+  bomLine   BomLine @relation(fields: [bomLineId], references: [id], onDelete: Cascade)
+
+  lotId String
+  lot   Lot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([bomLineId, lotId]) // a lot appears once per BOM line
+  @@index([lotId])
+  @@map("lot_assignments")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Execution  (append-only stream from Batchline webhooks)
+// ─────────────────────────────────────────────────────────────
+
+model ExecutionEvent {
+  id       String    @id @default(cuid())
+  seq      Int // order of arrival within the batch
+  kind     EventKind
+  title    String // human line, e.g. "Dispense Paracetamol API"
+  detail   String? // e.g. "298.6 kg from LOT-API-2201 (target 300)"
+  wireNote String? // technical note, e.g. "batch_status.update -> Started"
+
+  // Fields drawn from the webhook payloads.
+  batchStatus      OrderStatus?
+  actualValue      String?
+  targetValue      String?
+  uom              String?
+  lotRef           String?
+  repeatNo         Int?
+  hasException     Boolean      @default(false)
+  exceptionLevel   String?
+  executedUser     String?
+  executedEmail    String?
+  executedAt       DateTime?
+
+  orderId String
+  order   ProcessOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId, seq])
+  @@map("execution_events")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Recipe master  (Recipe -> RecipeStage -> RecipeSubStage / RecipeBomLine)
+//   1 product can have many recipes; 1 recipe has ordered stages;
+//   1 stage can have sub-stages and many BOM lines; a process order
+//   instantiates one approved recipe.
+// ─────────────────────────────────────────────────────────────
+
+model Recipe {
+  id         String       @id @default(cuid())
+  recipeId   String       @unique // business key, e.g. "RCP-BLEND-01"
+  version    Int          @default(1)
+  status     RecipeStatus @default(DRAFT)
+  baseSize   Decimal      @db.Decimal(15, 7) // quantities scale from this
+  uom        String
+  yieldPct   Decimal?     @db.Decimal(6, 3) // expected yield %
+  approvedBy String?
+  effective  DateTime?
+  note       String?
+
+  // Target product (PRODUCT or INTERMEDIATE).
+  productMaterialId String
+  productMaterial   Material @relation("RecipeProduct", fields: [productMaterialId], references: [id], onDelete: Restrict)
+
+  stages RecipeStage[]
+  orders ProcessOrder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productMaterialId])
+  @@index([status])
+  @@map("recipes")
+}
+
+model RecipeStage {
+  id        String  @id @default(cuid())
+  name      String
+  seq       Int     @default(1)
+  outputQty Decimal @db.Decimal(15, 7)
+  uom       String
+
+  recipeId String
+  recipe   Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  // Material this stage produces (PRODUCT or INTERMEDIATE).
+  outputMaterialId String
+  outputMaterial   Material @relation("RecipeStageOutput", fields: [outputMaterialId], references: [id], onDelete: Restrict)
+
+  subStages RecipeSubStage[]
+  bomLines  RecipeBomLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([recipeId, seq])
+  @@map("recipe_stages")
+}
+
+// Ordered operations within a stage (share the stage's output + BOM).
+model RecipeSubStage {
+  id   String @id @default(cuid())
+  name String
+  seq  Int    @default(1)
+
+  stageId String
+  stage   RecipeStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@map("recipe_sub_stages")
+}
+
+model RecipeBomLine {
+  id       String  @id @default(cuid())
+  bomId    String // eBR BOM variable, distinct from the material's id
+  quantity Decimal @db.Decimal(15, 7) // per the recipe's baseSize
+  uom      String
+
+  stageId String
+  stage   RecipeStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stageId])
+  @@index([materialId])
+  @@map("recipe_bom_lines")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Integration log  (REST calls out + webhooks in, with retry state)
+// ─────────────────────────────────────────────────────────────
+
+model IntegrationMessage {
+  id         String           @id @default(cuid())
+  direction  MessageDirection
+  endpoint   String // e.g. "/api/v1/processorder/create"
+  method     String? // POST / PUT / GET
+  entityType String? // "material" | "process_order" | "batch" ...
+  entityRef  String? // business key of the related entity
+  status     MessageStatus    @default(SENT)
+  httpStatus Int?
+  attempts   Int              @default(1) // Batchline retries a failed webhook 5x/min
+  reason     String? // failure reason shown next to the Resend action
+  payload    Json? // request body
+  response   Json? // response / webhook body
+
+  // Optional link back to the order this message concerns.
+  orderId String?
+  order   ProcessOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([direction, status])
+  @@index([orderId])
+  @@map("integration_messages")
+}

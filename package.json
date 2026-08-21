@@ -1,0 +1,39 @@
+{
+  "name": "pathline-erp",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Pathline ERP — Batchline integration proof of concept",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force",
+    "lims:generate": "prisma generate --schema prisma/lims.schema.prisma",
+    "lims:migrate": "prisma migrate dev --schema prisma/lims.schema.prisma",
+    "lims:seed": "tsx prisma/lims.seed.ts",
+    "postinstall": "prisma generate && prisma generate --schema prisma/lims.schema.prisma"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "next": "16.3.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "prisma": "^6.5.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
