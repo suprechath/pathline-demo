@@ -1,5 +1,5 @@
 import "server-only";
-import { limsPrisma } from "@/lib/db/lims-prisma";
+import { prisma } from "@/lib/db/prisma";
 import type { Prisma, ResultVerdict } from ".prisma/lims-client";
 
 const num = (d: Prisma.Decimal | null) => (d == null ? null : Number(d));
@@ -81,19 +81,19 @@ export function evalVerdict(spec: Pick<SpecVM, "limitType" | "lower" | "upper">,
 }
 
 export async function getHoldPoints(): Promise<HoldVM[]> {
-  const rows = await limsPrisma.holdPoint.findMany({ include: holdInclude, orderBy: { requestedAt: "desc" } });
+  const rows = await prisma.holdPoint.findMany({ include: holdInclude, orderBy: { requestedAt: "desc" } });
   return rows.map(toHoldVM);
 }
 
 export async function getHoldPoint(sampleId: string): Promise<HoldVM | null> {
-  const row = await limsPrisma.holdPoint.findUnique({ where: { sampleId }, include: holdInclude });
+  const row = await prisma.holdPoint.findUnique({ where: { sampleId }, include: holdInclude });
   return row ? toHoldVM(row) : null;
 }
 
 export async function limsStats() {
   const [onHold, pending] = await Promise.all([
-    limsPrisma.holdPoint.count({ where: { status: { in: ["PENDING", "IN_TEST", "AWAITING_RESULT"] } } }),
-    limsPrisma.holdPoint.count({ where: { status: { in: ["IN_TEST", "AWAITING_RESULT"] } } }),
+    prisma.holdPoint.count({ where: { status: { in: ["PENDING", "IN_TEST", "AWAITING_RESULT"] } } }),
+    prisma.holdPoint.count({ where: { status: { in: ["IN_TEST", "AWAITING_RESULT"] } } }),
   ]);
   return { onHold, pending };
 }

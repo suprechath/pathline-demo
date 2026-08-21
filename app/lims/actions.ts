@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { limsPrisma } from "@/lib/db/lims-prisma";
+import { prisma } from "@/lib/db/prisma";
 import { evalVerdict } from "@/lib/data/lims";
 import { returnDisposition } from "@/lib/batchline/ebr-client";
 import type { ActionResult } from "@/app/materials/actions";
@@ -19,10 +19,10 @@ export async function receiveHoldRequest(input: {
   specCode: string;
   ebrRequestRef?: string;
 }): Promise<ActionResult & { sampleId?: string }> {
-  const spec = await limsPrisma.qcSpecification.findUnique({ where: { code: input.specCode } });
+  const spec = await prisma.qcSpecification.findUnique({ where: { code: input.specCode } });
   if (!spec) return { ok: false, message: `Unknown specification ${input.specCode}`, system: "batchline" };
 
-  const hp = await limsPrisma.holdPoint.create({
+  const hp = await prisma.holdPoint.create({
     data: {
       sampleId: genSampleId(),
       batchId: input.batchId,
@@ -39,9 +39,9 @@ export async function receiveHoldRequest(input: {
 
 // Log receipt of the physical sample → testing may begin.
 export async function receiveSample(sampleId: string): Promise<ActionResult> {
-  const hp = await limsPrisma.holdPoint.findUnique({ where: { sampleId } });
+  const hp = await prisma.holdPoint.findUnique({ where: { sampleId } });
   if (!hp || hp.status !== "PENDING") return { ok: false, message: "Sample not awaiting receipt", system: "pathline" };
-  await limsPrisma.holdPoint.update({ where: { sampleId }, data: { status: "AWAITING_RESULT" } });
+  await prisma.holdPoint.update({ where: { sampleId }, data: { status: "AWAITING_RESULT" } });
   revalidatePath("/lims");
   return { ok: true, message: "Sample logged — testing may begin", system: "pathline" };
 }
@@ -55,7 +55,7 @@ export async function recordResult(input: {
   measuredValue: number;
   recordedBy?: string;
 }): Promise<ActionResult> {
-  const hp = await limsPrisma.holdPoint.findUnique({ where: { sampleId: input.sampleId }, include: { specification: true } });
+  const hp = await prisma.holdPoint.findUnique({ where: { sampleId: input.sampleId }, include: { specification: true } });
   if (!hp) return { ok: false, message: "Hold point not found", system: "pathline" };
   if (hp.status === "RELEASED" || hp.status === "FAILED") return { ok: false, message: "Already dispositioned", system: "pathline" };
   if (Number.isNaN(input.measuredValue)) return { ok: false, message: "Enter a numeric value", system: "pathline" };
@@ -68,8 +68,8 @@ export async function recordResult(input: {
 
   const ebr = await returnDisposition({ batchId: hp.batchId, sampleId: hp.sampleId, verdict });
 
-  await limsPrisma.$transaction([
-    limsPrisma.qcResult.create({
+  await prisma.$transaction([
+    prisma.qcResult.create({
       data: {
         holdPointId: hp.id,
         measuredName: input.measuredName,
@@ -80,7 +80,7 @@ export async function recordResult(input: {
         ebrResponseRef: ebr.ref,
       },
     }),
-    limsPrisma.holdPoint.update({ where: { id: hp.id }, data: { status: verdict === "PASS" ? "RELEASED" : "FAILED" } }),
+    prisma.holdPoint.update({ where: { id: hp.id }, data: { status: verdict === "PASS" ? "RELEASED" : "FAILED" } }),
   ]);
 
   revalidatePath("/lims");
@@ -96,7 +96,7 @@ export async function recordResult(input: {
 
 // Demo helper: fabricate an incoming EBR request against a random stored spec.
 export async function simulateIncoming(): Promise<ActionResult> {
-  const specs = await limsPrisma.qcSpecification.findMany();
+  const specs = await prisma.qcSpecification.findMany();
   if (specs.length === 0) return { ok: false, message: "No specifications seeded", system: "batchline" };
   const spec = specs[Math.floor(Math.random() * specs.length)];
   const n = Math.floor(1 + Math.random() * 9);

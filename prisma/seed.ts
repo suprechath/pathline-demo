@@ -8,6 +8,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 const prisma = new PrismaClient();
 
 const D = (n: number | string) => new Prisma.Decimal(n);
+const S = (n: number) => n.toString();
 
 async function main() {
   // ── wipe (safe order: children first) ───────────────────────────
@@ -24,6 +25,11 @@ async function main() {
   await prisma.stockMovement.deleteMany();
   await prisma.lot.deleteMany();
   await prisma.material.deleteMany();
+
+  // LIMS wipes
+  await prisma.qcResult.deleteMany();
+  await prisma.holdPoint.deleteMany();
+  await prisma.qcSpecification.deleteMany();
 
   // ── materials ───────────────────────────────────────────────────
   const para500 = await prisma.material.create({
@@ -160,7 +166,48 @@ async function main() {
     },
   });
 
-  console.log("Seeded:", { po2042: po2042.orderNo, po2041: po2041.orderNo });
+  // ── specifications (LIMS-local master) ──────────────────────────
+  const bu = await prisma.qcSpecification.create({
+    data: { code: "TM-BU-007", testName: "Blend Uniformity (RSD)", parameter: "RSD of 10 sample locations", limitType: "MAX", upper: S(5.0), unit: "%", limitText: "RSD ≤ 5.0 %" },
+  });
+  const ph = await prisma.qcSpecification.create({
+    data: { code: "TM-PH-002", testName: "pH", parameter: "pH at 25°C", limitType: "RANGE", lower: S(5.5), upper: S(7.0), unit: "", limitText: "5.5 – 7.0" },
+  });
+  const lod = await prisma.qcSpecification.create({
+    data: { code: "TM-LOD-011", testName: "Moisture (LOD)", parameter: "Loss on drying", limitType: "MAX", upper: S(2.0), unit: "%", limitText: "LOD ≤ 2.0 %" },
+  });
+  const assay = await prisma.qcSpecification.create({
+    data: { code: "TM-ASSAY-014", testName: "Assay (HPLC)", parameter: "Assay of active", limitType: "RANGE", lower: S(95.0), upper: S(105.0), unit: "%", limitText: "95.0 – 105.0 %" },
+  });
+
+  // ── hold points in a spread of states ───────────────────────────
+  await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0431", batchId: "PARA-BLEND_9", stageName: "Blending", gateStep: "Discharge blend to next step", ebrRequestRef: "EBR-REQ-9001", status: "PENDING", specificationId: bu.id },
+  });
+  await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0430", batchId: "PARA-SUSP_3", stageName: "Mixing", gateStep: "Proceed to fill", ebrRequestRef: "EBR-REQ-9000", status: "IN_TEST", specificationId: ph.id },
+  });
+  await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0428", batchId: "PARA-BLEND_8", stageName: "Drying", gateStep: "Release to blending", ebrRequestRef: "EBR-REQ-8994", status: "AWAITING_RESULT", specificationId: lod.id },
+  });
+  
+  // A released (pass) hold with its recorded result.
+  const rel = await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0421", batchId: "PARA-BLEND_7", stageName: "Blending", gateStep: "Discharge blend to next step", ebrRequestRef: "EBR-REQ-8990", status: "RELEASED", specificationId: bu.id },
+  });
+  await prisma.qcResult.create({
+    data: { holdPointId: rel.id, measuredName: "Relative std. deviation", measuredValue: S(3.1), verdict: "PASS", recordedBy: "A. Reyes", dispositionSentAt: new Date(), ebrResponseRef: "EBR-DISP-IPC-26-0421" },
+  });
+  
+  // A failed (OOS) hold — assay under the lower limit.
+  const fail = await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0426", batchId: "PARA-500_12", stageName: "Compression", gateStep: "Release cores to coating", ebrRequestRef: "EBR-REQ-8988", status: "FAILED", specificationId: assay.id },
+  });
+  await prisma.qcResult.create({
+    data: { holdPointId: fail.id, measuredName: "Assay", measuredValue: S(93.2), verdict: "OOS", recordedBy: "A. Reyes", dispositionSentAt: new Date(), ebrResponseRef: "EBR-DISP-IPC-26-0426" },
+  });
+
+  console.log("Database successfully seeded with ERP and LIMS data:", { po2042: po2042.orderNo, po2041: po2041.orderNo });
 }
 
 main()
