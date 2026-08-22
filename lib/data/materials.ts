@@ -12,3 +12,12 @@ export async function getAssignableMaterials(): Promise<MaterialVM[]> {
   const rows = await prisma.material.findMany({ where: { active: true }, orderBy: { name: "asc" } });
   return rows.map(toMaterialVM);
 }
+
+export async function getLastMaterialSync(): Promise<string | null> {
+  const msg = await prisma.integrationMessage.findFirst({
+    where: { entityType: "material" },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  return msg ? msg.createdAt.toISOString() : null;
+}

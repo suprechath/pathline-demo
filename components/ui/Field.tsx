@@ -21,7 +21,7 @@ export function Field({
 }
 
 const inputBase =
-  "w-full rounded-lg border border-[#d8ccb8] bg-white px-[11px] py-[9px] text-[13px] text-ink placeholder:text-faint focus:border-amber focus:outline-none";
+  "w-full rounded-lg border border-[#d8ccb8] bg-white px-[11px] py-[9px] text-[13px] text-ink placeholder:text-faint focus:border-amber focus:outline-none disabled:bg-[#f3ece0] disabled:text-[#8c7e6c] disabled:border-[#e3d8c8] disabled:cursor-not-allowed";
 
 export function TextInput({ mono, className, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
   return <input {...props} className={clsx(inputBase, mono && "font-mono", className)} />;

@@ -1,9 +1,12 @@
-'use client';
+"use client";
+import { SyncButton } from "./SyncButton";
 
-import SyncButton from './SyncButton';
-
-export default function SyncButtonWrapper() {
-  return (
-    <SyncButton onSyncComplete={() => console.log('Sync complete, refresh grid')} />
-  );
+export default function SyncButtonWrapper({
+  initialLastSync,
+  onSyncComplete,
+}: {
+  initialLastSync?: string | null;
+  onSyncComplete?: () => void;
+}) {
+  return <SyncButton initialLastSync={initialLastSync} onSyncComplete={onSyncComplete} />;
 }

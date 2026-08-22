@@ -11,9 +11,29 @@ export function MaterialForm({ open, onClose }: { open: boolean; onClose: () => 
   const [pending, start] = useTransition();
   const router = useRouter();
   const [type, setType] = useState("RAW");
+  const [uom, setUom] = useState("kg");
+  const [shelfLife, setShelfLife] = useState(0);
+  const [shelfLifeUom, setShelfLifeUom] = useState("YEARS");
+
+  const isRaw = type === "RAW";
+
+  const handleTypeChange = (newType: string) => {
+    setType(newType);
+    if (newType === "RAW") {
+      setShelfLife(0);
+      setShelfLifeUom("YEARS");
+    } else {
+      if (shelfLife === 0) setShelfLife(1);
+    }
+  };
 
   const submit = (form: FormData) =>
     start(async () => {
+      form.set("type", type);
+      form.set("uom", uom);
+      form.set("shelfLife", isRaw ? "0" : String(shelfLife));
+      form.set("shelfLifeUom", isRaw ? "YEARS" : shelfLifeUom);
+
       const res = await createMaterial(form);
       toast(res);
       if (res.ok) {
@@ -27,18 +47,51 @@ export function MaterialForm({ open, onClose }: { open: boolean; onClose: () => 
       <ModalHeader title="New material" onClose={onClose} />
       <form action={submit}>
         <div className="grid grid-cols-2 gap-[15px] px-6 py-[22px]">
-          <Field label="Material ID"><TextInput name="materialId" mono placeholder="PARA-500" required /></Field>
+          <Field label="Material ID">
+            <TextInput name="materialId" mono placeholder="PARA-500" required />
+          </Field>
           <Field label="Type">
-            <Select name="type" value={type} onChange={(e) => setType(e.target.value)}>
-              <option>RAW</option><option>INTERMEDIATE</option><option>PRODUCT</option>
+            <Select name="type" value={type} onChange={(e) => handleTypeChange(e.target.value)}>
+              <option value="RAW">RAW</option>
+              <option value="INTERMEDIATE">INTERMEDIATE</option>
+              <option value="PRODUCT">PRODUCT</option>
             </Select>
           </Field>
-          <Field label="Name" className="col-span-2"><TextInput name="name" placeholder="Paracetamol 500mg Tablet" required /></Field>
-          <Field label="UOM"><TextInput name="uom" mono placeholder="kg" defaultValue="kg" required /></Field>
-          <Field label="Shelf life" hint={type === "RAW" ? "RAW must be 0" : "positive integer"}>
+          <Field label="Name" className="col-span-2">
+            <TextInput name="name" placeholder="Paracetamol 500mg Tablet" required />
+          </Field>
+          <Field label="UOM">
+            <TextInput
+              name="uom"
+              mono
+              placeholder="kg"
+              value={uom}
+              onChange={(e) => setUom(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label="Shelf life" hint={isRaw ? "RAW has no shelf life (0)" : "positive integer"}>
             <div className="flex gap-1.5">
-              <TextInput name="shelfLife" mono defaultValue="0" />
-              <Select name="shelfLifeUom" className="w-auto"><option>YEARS</option><option>MONTHS</option><option>DAYS</option></Select>
+              <TextInput
+                name="shelfLife"
+                type="number"
+                mono
+                value={isRaw ? 0 : shelfLife}
+                onChange={(e) => setShelfLife(Number(e.target.value))}
+                min={isRaw ? 0 : 1}
+                disabled={isRaw}
+              />
+              <Select
+                name="shelfLifeUom"
+                className="w-auto"
+                value={isRaw ? "YEARS" : shelfLifeUom}
+                onChange={(e) => setShelfLifeUom(e.target.value)}
+                disabled={isRaw}
+              >
+                <option value="YEARS">YEARS</option>
+                <option value="MONTHS">MONTHS</option>
+                <option value="DAYS">DAYS</option>
+              </Select>
             </div>
           </Field>
         </div>
@@ -48,8 +101,12 @@ export function MaterialForm({ open, onClose }: { open: boolean; onClose: () => 
             On save, an outbound sync is logged to <code className="font-mono">/api/v1/material/create</code>
           </div>
           <div className="flex justify-end gap-2.5">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={pending}>{pending ? "Syncing…" : "Create & sync"}</Button>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? "Syncing…" : "Create & sync"}
+            </Button>
           </div>
         </div>
       </form>

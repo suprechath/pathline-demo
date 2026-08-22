@@ -111,7 +111,7 @@ export async function sendToBatchline(orderNo: string): Promise<ActionResult> {
       data: {
         direction: "OUTBOUND", endpoint: res.endpoint, method: res.method,
         entityType: "process_order", entityRef: orderNo, status: "DELIVERED", httpStatus: res.httpStatus,
-        payload: payload as object, response: res.response,
+        payload: payload as any, response: res.response as any,
       },
     }),
   ]);
