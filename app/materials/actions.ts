@@ -3,9 +3,6 @@ import { revalidatePath } from "next/cache";
 import { MaterialType, ShelfLifeUom } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { materialSchema } from "@/lib/domain/validation";
-import { sendMaterial } from "@/lib/batchline/client";
-import { buildMaterialPayload } from "@/lib/batchline/payloads";
-import { toMaterialVM } from "@/lib/domain/mappers";
 
 const BATCHLINE_API_KEY = process.env.BATCHLINE_API_KEY ?? "";
 const BATCHLINE_MATERIAL_API_URL =
@@ -66,7 +63,6 @@ export async function createMaterial(form: FormData): Promise<ActionResult> {
 
   if (!parsed.success) {
     const errorMsg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
-    console.error("materialSchema validation failed:", errorMsg, parsed.error.format());
     return { ok: false, message: errorMsg, system: "pathline" };
   }
   const data = parsed.data;
@@ -81,7 +77,6 @@ export async function createMaterial(form: FormData): Promise<ActionResult> {
         reason: (form.get("reason") as string) || "ERP Interface",
       },
     });
-    console.log("created material:", created)
   } catch (e) {
     const dup = e instanceof Error && e.message.includes("Unique");
     return { ok: false, message: dup ? "Material ID already exists" : "Failed to create material in database", system: "pathline" };
@@ -109,7 +104,6 @@ export async function createMaterial(form: FormData): Promise<ActionResult> {
   let isSuccess = false;
 
   try {
-    console.log("batchline payload:", batchlinePayload)
     const res = await fetch(BATCHLINE_MATERIAL_CREATE_API_URL, {
       method: "POST",
       headers: {
@@ -167,29 +161,6 @@ export async function createMaterial(form: FormData): Promise<ActionResult> {
 
   revalidatePath("/materials");
   return { ok: true, message: `Synced ${created.materialId} → Batchline /material/create`, system: "batchline" };
-}
-
-export async function toggleActive(materialId: string, reason?: string): Promise<ActionResult> {
-  const m = await prisma.material.findUnique({ where: { materialId } });
-  if (!m) return { ok: false, message: "Material not found", system: "pathline" };
-
-  const updated = await prisma.material.update({
-    where: { materialId },
-    data: { active: !m.active, reason: reason ?? null },
-  });
-  await prisma.integrationMessage.create({
-    data: {
-      direction: "OUTBOUND", endpoint: "/api/v1/material/update", method: "PUT",
-      entityType: "material", entityRef: materialId, status: "DELIVERED", httpStatus: 200,
-      payload: { material_id: materialId, active: updated.active } as object,
-    },
-  });
-  revalidatePath("/materials");
-  return {
-    ok: true,
-    message: `${updated.active ? "Activated" : "Deactivated"} ${materialId} → logged as sync`,
-    system: "batchline",
-  };
 }
 
 export async function updateMaterial(form: FormData): Promise<ActionResult> {
@@ -395,7 +366,6 @@ export async function syncMaterialsFromBatchline(): Promise<ActionResult> {
       const items = data.items || [];
       if (items.length === 0) {
         currentPage++;
-        console.log(`No items found on page ${currentPage - 1}. Moving to next page.`);
         continue;
       }
 
@@ -478,7 +448,6 @@ export async function syncMaterialsFromBatchline(): Promise<ActionResult> {
 
       totalSynced += createsToMake.length + updatesToMake.length;
       currentPage++;
-      console.log(`Completed sync for page ${currentPage - 1}. Total items synced so far: ${totalSynced}`);
     }
 
     // 6. Log integration message

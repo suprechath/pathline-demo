@@ -1,8 +1,6 @@
 "use client";
-import { useState, useTransition, useMemo, useRef, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useRef, useEffect } from "react";
 import type { MaterialVM } from "@/lib/domain/types";
-import { toggleActive } from "@/app/materials/actions";
 import { Table, Th, Td } from "@/components/ui/Table";
 import { Pill, TypeTag } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +8,6 @@ import { PageIntro } from "@/components/ui/PageIntro";
 import { SyncButton } from "./SyncButton";
 import { MaterialForm } from "./MaterialForm";
 import { EditMaterialDrawer } from "./EditMaterialDrawer";
-import { toast } from "@/components/ui/Toast";
 
 type TypeFilter = "ALL" | "PRODUCT" | "INTERMEDIATE" | "RAW";
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -37,8 +34,6 @@ export function MaterialsTable({
 }) {
   const [open, setOpen] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<MaterialVM | null>(null);
-  const [pending, start] = useTransition();
-  const router = useRouter();
 
   // Filters state
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,13 +51,6 @@ export function MaterialsTable({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  const onToggle = (materialId: string) =>
-    start(async () => {
-      const res = await toggleActive(materialId);
-      toast(res);
-      router.refresh();
-    });
 
   const filteredMaterials = useMemo(() => {
     return materials.filter((m) => {
