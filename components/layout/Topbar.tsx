@@ -34,9 +34,9 @@ export function Topbar() {
           </span>
           <span className="h-4 w-px bg-[#e0d3bf]" />
           <span className="flex items-center gap-[7px]">
-            <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-amber" />
-            <span className="text-[11.5px] font-semibold text-amber-deep">Batchline</span>
-            <span className="text-[10.5px] text-faint">EBR</span>
+            <span className="h-2.5 w-2.5 flex-none rounded-[3px] bg-lime-700" />
+            <span className="text-[11.5px] font-semibold text-lime-700">Batchline</span>
+            <span className="text-[10.5px] font-semibold text-lime-500">EBR</span>
           </span>
         </div>
       </div>
