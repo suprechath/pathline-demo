@@ -147,8 +147,8 @@ export function MaterialsTable({
                   type="button"
                   onClick={() => setSelectedType(opt.key)}
                   className={`rounded-[8px] px-3 py-1 text-[12px] transition-all ${active
-                      ? "bg-espresso font-semibold text-white shadow-sm"
-                      : "font-medium text-[#7c6d58] hover:text-espresso"
+                    ? "bg-espresso font-semibold text-white shadow-sm"
+                    : "font-medium text-[#7c6d58] hover:text-espresso"
                     }`}
                 >
                   {opt.label}
@@ -194,8 +194,8 @@ export function MaterialsTable({
                       setStatusOpen(false);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-[7px] px-3 py-2 text-left text-[12.5px] transition-colors ${selectedStatus === opt.key
-                        ? "bg-[#ede4d4] font-semibold text-espresso"
-                        : "font-medium text-ink hover:bg-panel-2"
+                      ? "bg-[#ede4d4] font-semibold text-espresso"
+                      : "font-medium text-ink hover:bg-panel-2"
                       }`}
                   >
                     <span className="h-2 w-2 rounded-full flex-none" style={{ background: opt.dotColor }} />
@@ -251,9 +251,23 @@ export function MaterialsTable({
               <Td right>
                 <button
                   onClick={() => setEditingMaterial(m)}
-                  className="rounded-md border border-[#e0d3bf] px-3 py-1.5 text-[12px] font-semibold text-amber-ink hover:bg-panel-2"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[#e0d3bf] px-3 py-1.5 text-[12px] font-semibold text-amber-ink hover:bg-panel-2"
                 >
-                  Edit
+                  <svg
+                    width="12.5"
+                    height="12.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="opacity-75"
+                  >
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                  <span>Edit</span>
                 </button>
               </Td>
             </tr>

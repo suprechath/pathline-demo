@@ -7,6 +7,40 @@ import { sendMaterial } from "@/lib/batchline/client";
 import { buildMaterialPayload } from "@/lib/batchline/payloads";
 import { toMaterialVM } from "@/lib/domain/mappers";
 
+const BATCHLINE_API_KEY = process.env.BATCHLINE_API_KEY ?? "";
+const BATCHLINE_MATERIAL_API_URL =
+  process.env.BATCHLINE_MATERIAL_API_URL ??
+  "https://material-demo.bl-client.com/api/v1/material/get";
+const BATCHLINE_MATERIAL_CREATE_API_URL =
+  process.env.BATCHLINE_MATERIAL_CREATE_API_URL ??
+  "https://material-demo.bl-client.com/api/v1/material/create";
+const BATCHLINE_MATERIAL_UPDATE_API_URL =
+  process.env.BATCHLINE_MATERIAL_UPDATE_API_URL ??
+  "https://material-demo.bl-client.com/api/v1/material/update";
+
+function formatMaterialTypeForBatchline(type: MaterialType): string {
+  if (type === "INTERMEDIATE") return "Intermediate";
+  if (type === "PRODUCT") return "Product";
+  return "Raw";
+}
+
+function formatShelfLifeUomForBatchline(uom: ShelfLifeUom): string {
+  switch (uom) {
+    case "YEARS":
+      return "Years";
+    case "MONTHS":
+      return "Months";
+    case "DAYS":
+      return "Days";
+    case "HOURS":
+      return "Hours";
+    case "MINUTES":
+      return "Minutes";
+    default:
+      return "Years";
+  }
+}
+
 export interface ActionResult {
   ok: boolean;
   message: string;
@@ -14,37 +48,125 @@ export interface ActionResult {
 }
 
 export async function createMaterial(form: FormData): Promise<ActionResult> {
+  const rawId = (form.get("materialId") as string | null)?.trim() ?? "";
+  const rawName = (form.get("name") as string | null)?.trim() ?? "";
+  const rawType = ((form.get("type") as string | null)?.trim().toUpperCase() || "RAW") as string;
+  const rawUom = (form.get("uom") as string | null)?.trim() || "kg";
+  const rawShelfLife = form.get("shelfLife");
+  const rawShelfLifeUom = ((form.get("shelfLifeUom") as string | null)?.trim().toUpperCase() || "YEARS") as string;
+
   const parsed = materialSchema.safeParse({
-    materialId: form.get("materialId"),
-    name: form.get("name"),
-    type: form.get("type"),
-    uom: form.get("uom"),
-    shelfLife: form.get("shelfLife"),
-    shelfLifeUom: form.get("shelfLifeUom"),
+    materialId: rawId,
+    name: rawName,
+    type: rawType,
+    uom: rawUom,
+    shelfLife: rawType === "RAW" ? 0 : rawShelfLife ?? 0,
+    shelfLifeUom: rawShelfLifeUom,
   });
+
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid material", system: "pathline" };
+    const errorMsg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+    console.error("materialSchema validation failed:", errorMsg, parsed.error.format());
+    return { ok: false, message: errorMsg, system: "pathline" };
   }
   const data = parsed.data;
 
+  // 1. Record in prisma.material
+  let created;
   try {
-    const created = await prisma.material.create({ data });
-    const res = await sendMaterial(buildMaterialPayload(toMaterialVM(created)));
-    await prisma.integrationMessage.create({
+    created = await prisma.material.create({
       data: {
-        direction: "OUTBOUND", endpoint: res.endpoint, method: res.method,
-        entityType: "material", entityRef: created.materialId,
-        status: "DELIVERED", httpStatus: res.httpStatus,
-        payload: buildMaterialPayload(toMaterialVM(created)) as any,
-        response: res.response as any,
+        ...data,
+        active: true,
+        reason: (form.get("reason") as string) || "ERP Interface",
       },
     });
-    revalidatePath("/materials");
-    return { ok: true, message: `Synced ${created.materialId} → Batchline /material/create`, system: "batchline" };
+    console.log("created material:", created)
   } catch (e) {
     const dup = e instanceof Error && e.message.includes("Unique");
-    return { ok: false, message: dup ? "Material ID already exists" : "Failed to create material", system: "pathline" };
+    return { ok: false, message: dup ? "Material ID already exists" : "Failed to create material in database", system: "pathline" };
   }
+
+  // 2. Call Batchline API
+  const batchlinePayload = {
+    materials: [
+      {
+        material_id: created.materialId,
+        material_name: created.name,
+        material_type: formatMaterialTypeForBatchline(created.type),
+        material_uom: created.uom,
+        shelf_life: created.shelfLife,
+        shelf_life_uom: formatShelfLifeUomForBatchline(created.shelfLifeUom),
+        comment: (form.get("comment") as string) || "This is an example of material open API.",
+        active: created.active,
+        reason: "ERP Interface",
+      },
+    ],
+  };
+
+  let responseData: any = null;
+  let responseStatus = 200;
+  let isSuccess = false;
+
+  try {
+    console.log("batchline payload:", batchlinePayload)
+    const res = await fetch(BATCHLINE_MATERIAL_CREATE_API_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": BATCHLINE_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(batchlinePayload),
+      cache: "no-store",
+    });
+
+    responseStatus = res.status;
+    try {
+      responseData = await res.json();
+    } catch {
+      responseData = { status: res.statusText };
+    }
+
+    isSuccess = res.ok;
+  } catch (apiErr) {
+    console.error("Batchline /material/create API error:", apiErr);
+    responseStatus = 502;
+    responseData = { error: apiErr instanceof Error ? apiErr.message : "Network error" };
+    isSuccess = false;
+  }
+
+  // Log outbound Integration Message
+  await prisma.integrationMessage.create({
+    data: {
+      direction: "OUTBOUND",
+      endpoint: "/api/v1/material/create",
+      method: "POST",
+      entityType: "material",
+      entityRef: created.materialId,
+      status: isSuccess ? "DELIVERED" : "FAILED",
+      httpStatus: responseStatus,
+      payload: batchlinePayload as any,
+      response: responseData as any,
+    },
+  });
+
+  // 3. Rollback prisma.material if API call failed
+  if (!isSuccess) {
+    await prisma.material.delete({ where: { id: created.id } });
+    const errorDetail =
+      responseData?.message ||
+      responseData?.error ||
+      responseData?.detail ||
+      `HTTP ${responseStatus}`;
+    return {
+      ok: false,
+      message: `Batchline creation failed (${errorDetail}). Database record rolled back.`,
+      system: "batchline",
+    };
+  }
+
+  revalidatePath("/materials");
+  return { ok: true, message: `Synced ${created.materialId} → Batchline /material/create`, system: "batchline" };
 }
 
 export async function toggleActive(materialId: string, reason?: string): Promise<ActionResult> {
@@ -70,49 +192,33 @@ export async function toggleActive(materialId: string, reason?: string): Promise
   };
 }
 
-function formatMaterialTypeForBatchline(type: MaterialType): string {
-  if (type === "INTERMEDIATE") return "Intermediate";
-  if (type === "PRODUCT") return "Product";
-  return "Raw";
-}
-
-function formatShelfLifeUomForBatchline(uom: ShelfLifeUom): string {
-  switch (uom) {
-    case "YEARS":
-      return "Years";
-    case "MONTHS":
-      return "Months";
-    case "DAYS":
-      return "Days";
-    case "HOURS":
-      return "Hours";
-    case "MINUTES":
-      return "Minutes";
-    default:
-      return "Years";
-  }
-}
-
 export async function updateMaterial(form: FormData): Promise<ActionResult> {
-  const materialId = form.get("materialId") as string;
-  if (!materialId) return { ok: false, message: "Material ID is required", system: "pathline" };
+  const rawId = (form.get("materialId") as string | null)?.trim() ?? "";
+  if (!rawId) return { ok: false, message: "Material ID is required", system: "pathline" };
+
+  const rawName = (form.get("name") as string | null)?.trim() ?? "";
+  const rawType = ((form.get("type") as string | null)?.trim().toUpperCase() || "RAW") as string;
+  const rawUom = (form.get("uom") as string | null)?.trim() || "kg";
+  const rawShelfLife = form.get("shelfLife");
+  const rawShelfLifeUom = ((form.get("shelfLifeUom") as string | null)?.trim().toUpperCase() || "YEARS") as string;
 
   const parsed = materialSchema.safeParse({
-    materialId,
-    name: form.get("name"),
-    type: form.get("type"),
-    uom: form.get("uom"),
-    shelfLife: form.get("shelfLife"),
-    shelfLifeUom: form.get("shelfLifeUom"),
+    materialId: rawId,
+    name: rawName,
+    type: rawType,
+    uom: rawUom,
+    shelfLife: rawType === "RAW" ? 0 : rawShelfLife ?? 0,
+    shelfLifeUom: rawShelfLifeUom,
   });
 
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid material data", system: "pathline" };
+    const errorMsg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+    return { ok: false, message: errorMsg, system: "pathline" };
   }
 
   const active = form.get("active") === "true" || form.get("active") === "on";
   const comment = (form.get("comment") as string) || "Updated from Pathline ERP";
-  const { name, type, uom, shelfLife, shelfLifeUom } = parsed.data;
+  const { materialId, name, type, uom, shelfLife, shelfLifeUom } = parsed.data;
 
   try {
     // 1. Update in local Database
@@ -217,14 +323,6 @@ export async function updateMaterial(form: FormData): Promise<ActionResult> {
     };
   }
 }
-
-const BATCHLINE_API_KEY = process.env.BATCHLINE_API_KEY ?? "";
-const BATCHLINE_MATERIAL_API_URL =
-  process.env.BATCHLINE_MATERIAL_API_URL ??
-  "https://material-demo.bl-client.com/api/v1/material/get";
-const BATCHLINE_MATERIAL_UPDATE_API_URL =
-  process.env.BATCHLINE_MATERIAL_UPDATE_API_URL ??
-  "https://material-demo.bl-client.com/api/v1/material/update";
 
 interface BatchlineMaterialItem {
   material_id: string;

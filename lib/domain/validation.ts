@@ -4,14 +4,14 @@
 import { z } from "zod";
 
 export const materialSchema = z.object({
-  materialId: z.string().min(1).max(20).regex(/^[A-Za-z0-9-]+$/, "alphanumeric / dash only"),
+  materialId: z.string().min(1).max(50).regex(/^[A-Za-z0-9-_./ ]+$/, "alphanumeric, dash, underscore, dot only"),
   name: z.string().min(1).max(100),
   type: z.enum(["RAW", "INTERMEDIATE", "PRODUCT"]),
-  uom: z.string().min(1).max(10),
+  uom: z.string().min(1).max(20),
   shelfLife: z.coerce.number().int().min(0),
   shelfLifeUom: z.enum(["YEARS", "MONTHS", "DAYS", "HOURS", "MINUTES"]),
-}).refine((m) => (m.type === "RAW" ? m.shelfLife === 0 : m.shelfLife > 0), {
-  message: "RAW shelf life must be 0; INTERMEDIATE/PRODUCT must be a positive integer",
+}).refine((m) => (m.type === "RAW" ? m.shelfLife === 0 : m.shelfLife >= 0), {
+  message: "RAW shelf life must be 0; INTERMEDIATE/PRODUCT must be a non-negative integer",
   path: ["shelfLife"],
 });
 
