@@ -79,6 +79,42 @@ export async function POST(req: Request) {
         },
       }),
     );
+
+    // If batch was CANCELLED, release any remaining unconsumed inventory reservations
+    if (body.batch_status === "CANCELLED") {
+      const assignments = await prisma.lotAssignment.findMany({
+        where: { bomLine: { stage: { orderId: order.id } } },
+        include: { lot: { include: { movements: true } } },
+      });
+      for (const a of assignments) {
+        const lot = a.lot;
+        const reservedForOrder = lot.movements
+          .filter((m) => m.note === order.orderNo)
+          .reduce(
+            (sum, m) =>
+              sum +
+              (m.reason === "RESERVE"
+                ? Number(m.quantity)
+                : m.reason === "RELEASE"
+                ? -Math.abs(Number(m.quantity))
+                : 0),
+            0
+          );
+        if (reservedForOrder > 0) {
+          writes.push(
+            prisma.stockMovement.create({
+              data: {
+                lotId: lot.id,
+                reason: "RELEASE",
+                quantity: -reservedForOrder,
+                note: `Order ${order.orderNo} cancelled`,
+                user: body.executed_user ?? "system",
+              },
+            })
+          );
+        }
+      }
+    }
   }
 
   // A dispense instruction that references a lot + actual consumes that lot:

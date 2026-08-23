@@ -40,7 +40,7 @@ export interface WebhookEvent {
   seq: number;
   title: string;
   detail?: string;
-  batch_status?: "STARTED" | "COMPLETED" | "CANCELLED";
+  batch_status?: "STARTED" | "COMPLETED" | "REVIEWED" | "CANCELLED";
   actual_value?: string;
   target_value?: string;
   uom?: string;
