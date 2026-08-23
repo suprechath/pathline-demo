@@ -50,6 +50,7 @@ export function toLotVM(l: Lot & { material: Material }): LotVM {
 type FullOrder = Prisma.ProcessOrderGetPayload<{
   include: {
     productMaterial: true;
+    recipe: true;
     stages: {
       include: {
         bomLines: { include: { material: true; assignments: { include: { lot: true } } } };
@@ -94,7 +95,7 @@ export function toOrderVM(o: FullOrder): OrderVM {
     planEnd: o.planEnd.toISOString().slice(0, 10),
     status: o.status,
     sent: o.status !== "DRAFT", // derived
-    erpRecipeId: o.erpRecipeId ?? null,
+    erpRecipeId: o.erpRecipeId ?? o.recipe?.recipeId ?? null,
     stageName: stage?.name ?? "—",
     fullyAssigned: bom.length > 0 && bom.every((b) => b.balanced),
     readyToSend: o.readyToSend,

@@ -55,16 +55,24 @@ export function OrderWizard({
         stageName: "",
       };
     }
-    const matchedRecipe = recipes.find(
-      (r) =>
-        (initialOrder.erpRecipeId && r.recipeId.toLowerCase() === initialOrder.erpRecipeId.toLowerCase()) ||
-        r.id === initialOrder.erpRecipeId ||
-        r.productId === initialOrder.productId
-    );
+    const targetRecipeId = initialOrder.erpRecipeId || "";
+    let matchedRecipe = targetRecipeId
+      ? recipes.find(
+          (r) =>
+            r.recipeId.toLowerCase() === targetRecipeId.toLowerCase() ||
+            r.id === targetRecipeId
+        )
+      : null;
+
+    if (!matchedRecipe && !targetRecipeId) {
+      matchedRecipe = recipes.find((r) => r.productId === initialOrder.productId) ?? null;
+    }
+
+    const resolvedRecipeId = matchedRecipe?.recipeId ?? targetRecipeId;
     return {
       orderNo: initialOrder.orderNo,
-      recipeId: matchedRecipe?.recipeId ?? initialOrder.erpRecipeId ?? "",
-      product: initialOrder.productId,
+      recipeId: resolvedRecipeId,
+      product: matchedRecipe?.productId ?? initialOrder.productId,
       size: initialOrder.size,
       uom: initialOrder.uom,
       planStart: initialOrder.planStart,
@@ -77,12 +85,19 @@ export function OrderWizard({
   const buildInitialLines = (): WizLine[] => {
     if (!initialOrder) return [];
 
-    const matchedRecipe = recipes.find(
-      (r) =>
-        (initialOrder.erpRecipeId && r.recipeId.toLowerCase() === initialOrder.erpRecipeId.toLowerCase()) ||
-        r.id === initialOrder.erpRecipeId ||
-        r.productId === initialOrder.productId
-    );
+    const targetRecipeId = initialOrder.erpRecipeId || "";
+    let matchedRecipe = targetRecipeId
+      ? recipes.find(
+          (r) =>
+            r.recipeId.toLowerCase() === targetRecipeId.toLowerCase() ||
+            r.id === targetRecipeId
+        )
+      : null;
+
+    if (!matchedRecipe && !targetRecipeId) {
+      matchedRecipe = recipes.find((r) => r.productId === initialOrder.productId) ?? null;
+    }
+
     const baseSizeNum = Number(matchedRecipe?.baseSize) || Number(initialOrder.size) || 1;
     const currentSizeNum = Number(initialOrder.size) || baseSizeNum;
     const scale = baseSizeNum > 0 ? currentSizeNum / baseSizeNum : 1;
@@ -123,8 +138,11 @@ export function OrderWizard({
   }, [open, initialOrder, recipes]);
 
   const selectRecipe = (recipeId: string) => {
-    const r = recipes.find((x) => x.recipeId === recipeId);
-    if (!r) return;
+    const r = recipes.find((x) => x.recipeId === recipeId || x.id === recipeId);
+    if (!r) {
+      setForm((prev) => ({ ...prev, recipeId }));
+      return;
+    }
 
     // Aggregate BOM lines across all stages of the recipe with initial 1x standard scaling
     const newLines: WizLine[] = [];

@@ -210,7 +210,11 @@ export async function createAndSendOrderToBatchline(
 
   // Resolve recipe
   const recipe = input.recipeId
-    ? await prisma.recipe.findUnique({ where: { recipeId: input.recipeId } })
+    ? await prisma.recipe.findFirst({
+        where: {
+          OR: [{ recipeId: input.recipeId }, { id: input.recipeId }],
+        },
+      })
     : null;
 
   const allLotIds = input.lines.flatMap((l) => l.lots.map((x) => x.lotId));
@@ -235,7 +239,7 @@ export async function createAndSendOrderToBatchline(
         orderNo: input.orderNo.trim(),
         productMaterialId: product.id,
         recipeId: recipe?.id ?? null,
-        erpRecipeId: recipe?.recipeId ?? null,
+        erpRecipeId: recipe?.recipeId ?? input.recipeId ?? null,
         size: input.size,
         uom: input.uom,
         planStart: new Date(input.planStart),
@@ -391,7 +395,11 @@ export async function updateDraftOrder(
   }
 
   const recipe = input.recipeId
-    ? await prisma.recipe.findUnique({ where: { recipeId: input.recipeId } })
+    ? await prisma.recipe.findFirst({
+        where: {
+          OR: [{ recipeId: input.recipeId }, { id: input.recipeId }],
+        },
+      })
     : null;
 
   const allLotIds = input.lines.flatMap((l) => l.lots.map((x) => x.lotId));
@@ -418,7 +426,7 @@ export async function updateDraftOrder(
         data: {
           productMaterialId: product.id,
           recipeId: recipe?.id ?? null,
-          erpRecipeId: recipe?.recipeId ?? null,
+          erpRecipeId: recipe?.recipeId ?? input.recipeId ?? null,
           size: input.size,
           uom: input.uom,
           planStart: new Date(input.planStart),

@@ -5,6 +5,7 @@ import type { OrderVM, EventVM, OrderIntegrationErrorVM } from "@/lib/domain/typ
 
 const fullInclude = {
   productMaterial: true,
+  recipe: true,
   stages: {
     orderBy: { seq: "asc" as const },
     include: {

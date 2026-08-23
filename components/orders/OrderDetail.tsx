@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { OrderVM, EventVM, OrderIntegrationErrorVM, MaterialVM, LotVM } from "@/lib/domain/types";
@@ -71,6 +71,17 @@ export function OrderDetail({
 
   const showSim = order.sent && !running && (order.status === "PLANNED" || order.status === "STARTED" || order.status === "COMPLETED");
 
+  const consumedLots = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of events) {
+      if (e.lotRef && e.actualValue && Number(e.actualValue) > 0) {
+        const current = map.get(e.lotRef) ?? 0;
+        map.set(e.lotRef, current + Number(e.actualValue));
+      }
+    }
+    return map;
+  }, [events]);
+
   return (
     <div className="mx-auto max-w-[1120px]">
       <Link href="/orders" className="mb-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-ink">
@@ -97,6 +108,10 @@ export function OrderDetail({
                   </svg>
                   Edit Order
                 </Button>
+                <Button variant="batchline" disabled={!order.fullyAssigned || pending} onClick={onSend}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" /></svg>
+                  Send to Batchline
+                </Button>
               </>
             )}
             {order.sent && (
@@ -108,83 +123,74 @@ export function OrderDetail({
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-4 gap-px overflow-hidden rounded-[10px] border border-line bg-line">
+        <div className="mt-5 grid grid-cols-4 gap-4 border-t border-line pt-[18px] max-md:grid-cols-2">
           {stats.map((s) => (
-            <div key={s.k} className="bg-panel px-4 py-[13px]">
-              <div className="mb-1 text-[10.5px] uppercase tracking-[.8px] text-faint">{s.k}</div>
-              <div className="font-mono text-[14px] font-semibold text-ink">{s.v}</div>
+            <div key={s.k}>
+              <div className="text-[11px] font-semibold uppercase tracking-[.6px] text-faint">{s.k}</div>
+              <div className="mt-1 font-mono text-[13px] font-medium text-ink">{s.v}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Batchline Integration Error Banner */}
+      {/* Integration Error Banner */}
       {lastError && !order.sent && (
-        <div className="mb-[18px] rounded-[14px] border border-[#f0c8c4] bg-[#fff5f4] p-5 shadow-[0_1px_2px_rgba(200,60,40,.06)]">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-3.5">
-              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fde8e6] text-[#b3261e]">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+        <div className="mb-[18px] overflow-hidden rounded-[14px] border border-[#e8a89e] bg-[#fbf3f1] p-5 shadow-[0_1px_2px_rgba(74,50,34,.04)]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e8432a] text-white">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
               </div>
               <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-semibold text-[#8c1d18] text-[14px]">
-                    Batchline API Transmission Failed {lastError.status ? `(HTTP ${lastError.status})` : ""}
+                <div className="flex items-center gap-2">
+                  <span className="text-[13.5px] font-bold text-[#8a2216]">
+                    Batchline Dispatch Failed ({lastError.status ? `HTTP ${lastError.status}` : "Network Error"})
                   </span>
-                  <span className="rounded border border-[#f0c8c4] bg-[#fde8e6] px-1.5 py-0.5 font-mono text-[11px] text-[#b3261e]">
-                    {new Date(lastError.createdAt).toLocaleTimeString()}
+                  <span className="rounded bg-[#f5d5cf] px-1.5 py-0.5 font-mono text-[11px] font-semibold text-[#8a2216]">
+                    {lastError.status}
                   </span>
                 </div>
-                {lastError.errorDetail.includes("|") ? (
-                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[13px] text-[#5c1d1a] leading-relaxed">
-                    {lastError.errorDetail
-                      .split("|")
-                      .map((item) => item.trim())
-                      .filter(Boolean)
-                      .map((item, idx) => (
-                        <li key={idx}>{item}</li>
-                      ))}
-                  </ul>
-                ) : (
-                  <p className="mt-1 text-[13px] text-[#5c1d1a] leading-relaxed">
-                    {lastError.errorDetail}
-                  </p>
+                {lastError.errorDetail && (
+                  <div className="mt-1.5 text-[13px] text-[#5c1d1a] leading-relaxed">
+                    {lastError.errorDetail.includes("|") ? (
+                      <ul className="list-disc pl-4 space-y-1">
+                        {lastError.errorDetail.split("|").map((line, idx) => {
+                          const trimmed = line.trim();
+                          return trimmed ? <li key={idx}>{trimmed}</li> : null;
+                        })}
+                      </ul>
+                    ) : (
+                      <p>{lastError.errorDetail}</p>
+                    )}
+                  </div>
                 )}
-                <div className="mt-2 text-[11.5px] text-[#8c504a]">
-                  This order was saved in Pathline ERP as <strong>DRAFT</strong>. Click <strong>Edit Order</strong> above to adjust parameters and re-send to Batchline.
+                <div className="mt-2 flex items-center gap-3 text-[11.5px] text-[#8a2216]/80 font-mono">
+                  <span>{new Date(lastError.createdAt).toLocaleString()}</span>
                 </div>
               </div>
             </div>
+            <Button
+              variant="outline"
+              disabled={!order.fullyAssigned || pending}
+              onClick={onSend}
+              className="shrink-0 border-[#d8897e] bg-white text-[#8a2216] hover:bg-[#faeae6] text-[12.5px] py-1.5 px-3"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+              Retry Dispatch
+            </Button>
           </div>
-
-          {/* Collapsible raw error body preview */}
-          {lastError.responseBody && (
-            <div className="mt-3.5 border-t border-[#f5d0cc] pt-3">
-              <details className="group">
-                <summary className="cursor-pointer text-[12px] font-medium text-[#a8251e] hover:text-[#7d1712] flex items-center gap-1.5 select-none">
-                  <svg className="transition-transform group-open:rotate-90" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                  View full Batchline API error response body
-                </summary>
-                <pre className="mt-2.5 max-h-56 overflow-auto rounded-lg border border-[#edd2ce] bg-white/95 p-3.5 font-mono text-[11.5px] leading-relaxed text-[#4a1c18] select-all shadow-inner">
-                  {typeof lastError.responseBody === "object"
-                    ? JSON.stringify(lastError.responseBody, null, 2)
-                    : String(lastError.responseBody)}
-                </pre>
-              </details>
-            </div>
-          )}
         </div>
       )}
 
       <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start gap-[18px] max-lg:grid-cols-1">
         {/* BOM */}
-        <div className="overflow-hidden rounded-[14px] border border-border bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
+        <div className="h-[600px] overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
           <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px]">
             <span className="h-2.5 w-2.5 rounded-[3px] bg-espresso" />
             <span className="text-[14px] font-semibold text-ink">Bill of materials</span>
@@ -192,23 +198,110 @@ export function OrderDetail({
           </div>
           <div className="px-5 pb-[18px] pt-1.5">
             {order.bom.map((b) => {
-              const pct = Math.min(100, Math.round((b.assigned / Number(b.required)) * 100));
+              const requiredNum = Number(b.required) || 1;
+              const totalConsumedForLine = b.lots.reduce((sum, la) => {
+                return sum + (consumedLots.get(la.lotId) ?? 0);
+              }, 0);
+
+              const hasConsumption = totalConsumedForLine > 0;
+              const consumedPct = Math.min(100, Math.round((totalConsumedForLine / requiredNum) * 100));
+              const isFullyConsumed = totalConsumedForLine >= requiredNum - 1e-4;
+
               return (
                 <div key={b.id} className="border-b border-[#f2ebdd] py-[15px] last:border-0">
                   <div className="flex items-baseline justify-between gap-3">
-                    <div><span className="text-[13.5px] font-semibold text-ink">{b.material}</span> <span className="font-mono text-[11px] text-faint">{b.bomId}</span></div>
-                    <div className="font-mono text-[12.5px] text-ink">{b.assigned} / {b.required} <span className="text-faint">{b.uom}</span></div>
-                  </div>
-                  <div className="my-2 h-[7px] overflow-hidden rounded-[5px] bg-line">
-                    <div className="h-full rounded-[5px]" style={{ width: `${pct}%`, background: b.balanced ? "#7d9540" : "#b87333" }} />
-                  </div>
-                  {b.lots.map((la) => (
-                    <div key={la.lotId} className="flex items-center gap-2 py-0.5 text-[12px] text-muted">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#b87333" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-                      <span className="font-mono text-amber-ink">{la.lotId}</span>
-                      <span className="ml-auto font-mono">{la.quantity} {b.uom}</span>
+                    <div>
+                      <span className="text-[13.5px] font-semibold text-ink">{b.material}</span>{" "}
+                      <span className="font-mono text-[11px] text-faint">{b.bomId}</span>
                     </div>
-                  ))}
+                    <div className="text-right">
+                      <div className="font-mono text-[12.5px] font-medium text-ink">
+                        <span className={isFullyConsumed ? "font-bold text-[#526d25]" : hasConsumption ? "font-bold text-amber-ink" : "font-semibold text-[#a8432a]"}>
+                          {hasConsumption ? totalConsumedForLine.toFixed(1) : "0.0"}
+                        </span>
+                        {" "}/ {b.required} <span className="text-faint">{b.uom}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dynamic Consumption Progress Bar */}
+                  <div className="my-2 h-[8px] overflow-hidden rounded-[5px] bg-[#fae8e6]">
+                    <div
+                      className="h-full rounded-[5px] transition-all duration-500 ease-out"
+                      style={{
+                        width: `${hasConsumption ? Math.max(consumedPct, 3) : 0}%`,
+                        background: isFullyConsumed
+                          ? "#7d9540"
+                          : hasConsumption
+                            ? "#b87333"
+                            : "#d9534f",
+                      }}
+                    />
+                  </div>
+
+                  {/* Consumed vs Pending Status Note */}
+                  <div className="mb-2 flex items-center justify-between text-[11px]">
+                    <span className="text-muted font-medium">
+                      {isFullyConsumed ? (
+                        <span className="text-[#526d25] font-semibold">✓ Fully Consumed (100%)</span>
+                      ) : hasConsumption ? (
+                        <span className="text-amber-ink font-semibold">In Progress ({consumedPct}% dispensed)</span>
+                      ) : (
+                        <span className="text-[#a8432a] font-semibold">● 0% Consumed (Pending Dispense)</span>
+                      )}
+                    </span>
+                    <span className="font-mono text-[11px] text-faint">
+                      Allocated: {b.assigned} {b.uom}
+                    </span>
+                  </div>
+
+                  {/* Lots with Dynamic Checkmarks */}
+                  <div className="space-y-1.5">
+                    {b.lots.map((la) => {
+                      const isLotConsumed = (consumedLots.get(la.lotId) ?? 0) > 0;
+                      const lotConsumedQty = consumedLots.get(la.lotId) ?? 0;
+
+                      return (
+                        <div
+                          key={la.lotId}
+                          className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-all ${isLotConsumed
+                            ? "border-[#c4deb0] bg-[#f4f9ed] text-[#3e561c]"
+                            : "border-[#eddacf] bg-[#fdfcf9] text-muted"
+                            }`}
+                        >
+                          {isLotConsumed ? (
+                            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#6d8a34] text-white shadow-xs">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </span>
+                          ) : (
+                            <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-[#d98276] bg-white">
+                              <span className="h-1.5 w-1.5 rounded-full bg-[#d05040]" />
+                            </span>
+                          )}
+
+                          <span className={`font-mono text-[12px] ${isLotConsumed ? "font-bold text-ink" : "text-ink"}`}>
+                            {la.lotId}
+                          </span>
+
+                          {isLotConsumed ? (
+                            <span className="rounded bg-[#e0edd0] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#486320]">
+                              Dispensed ({lotConsumedQty} {b.uom})
+                            </span>
+                          ) : (
+                            <span className="rounded bg-[#fbebe8] px-1.5 py-0.5 text-[10.5px] font-semibold text-[#b54c3a]">
+                              Pending Dispense
+                            </span>
+                          )}
+
+                          <span className={`ml-auto font-mono text-[12px] ${isLotConsumed ? "font-bold text-[#486320]" : "text-muted"}`}>
+                            {la.quantity} {b.uom}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
@@ -216,7 +309,7 @@ export function OrderDetail({
         </div>
 
         {/* Execution */}
-        <div className="overflow-hidden rounded-[14px] border border-border bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
+        <div className="h-[600px] overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
           <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px]">
             <span className="h-2.5 w-2.5 rounded-[3px] bg-amber" />
             <span className="text-[14px] font-semibold text-ink">Execution</span>
