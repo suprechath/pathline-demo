@@ -30,16 +30,19 @@ export function Th({
   className,
   style,
   sticky = true,
+  onClick,
 }: {
   children?: React.ReactNode;
   right?: boolean;
   className?: string;
   style?: React.CSSProperties;
   sticky?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <th
       style={style}
+      onClick={onClick}
       className={clsx(
         "bg-panel-2 px-[18px] py-3 text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]",
         sticky && "sticky top-0 z-10 border-b border-border shadow-[0_1px_0_#e6dbcb]",

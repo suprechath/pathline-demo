@@ -1,26 +1,32 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RecipeVM } from "@/lib/data/recipes";
 import type { MaterialVM } from "@/lib/domain/types";
 import { Table, Th, Td } from "@/components/ui/Table";
 import { Button } from "@/components/ui/Button";
+import { PageIntro } from "@/components/ui/PageIntro";
 import { RecipeForm } from "./RecipeForm";
 
 type SortKey = "recipeId" | "product" | "productId";
 
 export function RecipesTable({ recipes, materials }: { recipes: RecipeVM[]; materials: MaterialVM[] }) {
   const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const [applied, setApplied] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey | null; dir: "asc" | "desc" }>({ key: null, dir: "asc" });
   const router = useRouter();
 
   const rows = useMemo(() => {
     let list = recipes;
-    const s = applied.trim().toLowerCase();
-    if (s) list = list.filter((r) => r.recipeId.toLowerCase().includes(s) || r.product.toLowerCase().includes(s) || r.productId.toLowerCase().includes(s));
+    const s = searchQuery.trim().toLowerCase();
+    if (s) {
+      list = list.filter(
+        (r) =>
+          r.recipeId.toLowerCase().includes(s) ||
+          r.product.toLowerCase().includes(s) ||
+          r.productId.toLowerCase().includes(s)
+      );
+    }
     if (sort.key) {
       const dir = sort.dir === "asc" ? 1 : -1;
       list = [...list].sort((a, b) => {
@@ -30,7 +36,9 @@ export function RecipesTable({ recipes, materials }: { recipes: RecipeVM[]; mate
       });
     }
     return list;
-  }, [recipes, applied, sort]);
+  }, [recipes, searchQuery, sort]);
+
+  const isFiltered = searchQuery.trim() !== "";
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
@@ -38,27 +46,70 @@ export function RecipesTable({ recipes, materials }: { recipes: RecipeVM[]; mate
 
   return (
     <>
-      <div className="mb-3.5 flex items-center gap-3">
-        <input
-          value={q}
-          onChange={(e) => { setQ(e.target.value); if (!e.target.value) setApplied(""); }}
-          onKeyDown={(e) => e.key === "Enter" && setApplied(q)}
-          placeholder="Search recipe ID, product or product ID — Enter"
-          className="w-[300px] rounded-lg border border-[#d8ccb8] bg-panel px-3 py-2 text-[12.5px] focus:border-amber focus:outline-none"
-        />
-        <Button className="ml-auto" onClick={() => setOpen(true)}>
+      <PageIntro className="max-w-[760px]">
+        <div>
+          <div>Master recipes. A recipe defines the stage → output → BOM mapping for a product.</div>
+          <div>Orders instantiate an approved recipe rather than defining stages by hand, so planners cannot mis-map a stage.</div>
+          <div className="mt-1 text-[12px] text-muted">
+            {isFiltered ? (
+              <span>
+                Showing <strong className="font-mono text-espresso">{rows.length}</strong> of{" "}
+                <strong className="font-mono text-espresso">{recipes.length}</strong> recipes found
+              </span>
+            ) : (
+              <span>
+                Total <strong className="font-mono text-espresso">{recipes.length}</strong> recipes
+              </span>
+            )}
+          </div>
+        </div>
+      </PageIntro>
+
+      <div className="mb-3.5 flex items-center justify-between gap-3">
+        <div className="relative flex items-center">
+          <svg
+            className="pointer-events-none absolute left-3 text-faint"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search recipe ID, product or product ID — Enter"
+            className="w-[340px] rounded-lg border border-[#d8ccb8] bg-panel pl-8 pr-3 py-2 text-[12.5px] text-ink placeholder:text-faint focus:border-amber focus:outline-none"
+          />
+        </div>
+        <Button onClick={() => setOpen(true)}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           New recipe
         </Button>
       </div>
 
-      <Table>
+      <Table containerClassName="max-h-[calc(100vh-245px)] overflow-y-auto">
         <thead>
           <tr>
-            <th onClick={() => toggleSort("recipeId")} className="cursor-pointer select-none bg-panel-2 px-[18px] py-3 text-left text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]">Recipe ID <span className="text-[9px] text-amber-ink">{arrow("recipeId")}</span></th>
-            <th onClick={() => toggleSort("product")} className="cursor-pointer select-none bg-panel-2 px-[18px] py-3 text-left text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]">Product <span className="text-[9px] text-amber-ink">{arrow("product")}</span></th>
-            <th onClick={() => toggleSort("productId")} className="cursor-pointer select-none bg-panel-2 px-[18px] py-3 text-left text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]">Product ID <span className="text-[9px] text-amber-ink">{arrow("productId")}</span></th>
-            <Th right>Stages</Th><Th right>BOM lines</Th><Th right>Yield</Th><Th right />
+            <Th onClick={() => toggleSort("recipeId")} className="cursor-pointer select-none">
+              Recipe ID <span className="text-[9px] text-amber-ink">{arrow("recipeId")}</span>
+            </Th>
+            <Th onClick={() => toggleSort("product")} className="cursor-pointer select-none">
+              Product <span className="text-[9px] text-amber-ink">{arrow("product")}</span>
+            </Th>
+            <Th onClick={() => toggleSort("productId")} className="cursor-pointer select-none">
+              Product ID <span className="text-[9px] text-amber-ink">{arrow("productId")}</span>
+            </Th>
+            <Th right>Stages</Th>
+            <Th right>BOM lines</Th>
+            <Th right>Yield</Th>
+            <Th right />
           </tr>
         </thead>
         <tbody>
@@ -83,3 +134,4 @@ export function RecipesTable({ recipes, materials }: { recipes: RecipeVM[]; mate
     </>
   );
 }
+
