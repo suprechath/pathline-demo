@@ -94,6 +94,7 @@ export function toOrderVM(o: FullOrder): OrderVM {
     planEnd: o.planEnd.toISOString().slice(0, 10),
     status: o.status,
     sent: o.status !== "DRAFT", // derived
+    erpRecipeId: o.erpRecipeId ?? null,
     stageName: stage?.name ?? "—",
     fullyAssigned: bom.length > 0 && bom.every((b) => b.balanced),
     readyToSend: o.readyToSend,

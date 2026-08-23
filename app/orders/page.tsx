@@ -1,24 +1,22 @@
 import { getOrders } from "@/lib/data/orders";
 import { getAssignableMaterials } from "@/lib/data/materials";
 import { getLots } from "@/lib/data/lots";
+import { getRecipes } from "@/lib/data/recipes";
 import { OrdersTable } from "@/components/orders/OrdersTable";
-import { PageIntro } from "@/components/ui/PageIntro";
 
 export const dynamic = "force-dynamic";
 
 export default async function OrdersPage() {
-  const [orders, materials, lots] = await Promise.all([
+  const [orders, materials, lots, recipes] = await Promise.all([
     getOrders(),
     getAssignableMaterials(),
     getLots(),
+    getRecipes(),
   ]);
   return (
     <div className="mx-auto max-w-[1080px]">
-      <PageIntro>
-        Process orders. Build an order, assign lots until the sum bar balances, then send to Batchline
-        and watch execution return live in the drill-down.
-      </PageIntro>
-      <OrdersTable orders={orders} materials={materials} lots={lots} />
+      <OrdersTable orders={orders} materials={materials} lots={lots} recipes={recipes} />
     </div>
   );
 }
+

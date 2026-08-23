@@ -80,27 +80,40 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
   };
 
   const handleSaveStages = () => {
+    // Validate draft stages
+    for (const [idx, s] of draftStages.entries()) {
+      if (!s.name.trim()) {
+        toast({ ok: false, message: `Stage ${idx + 1} name cannot be empty`, system: "pathline" });
+        return;
+      }
+      if (!s.outputId) {
+        toast({ ok: false, message: `Stage ${idx + 1} must produce an output material`, system: "pathline" });
+        return;
+      }
+    }
+
     startTransition(async () => {
       const res = await updateRecipeStages({
         recipeId: recipe.recipeId,
         stages: draftStages.map((s, idx) => ({
-          name: s.name,
+          name: s.name.trim(),
           seq: idx + 1,
           outputMaterialId: s.outputId,
           outputQty: Number(s.outputQty) || 0,
           uom: s.uom,
           subStages: s.subStages.map((ss, sIdx) => ({
-            name: ss.name,
+            name: ss.name.trim(),
             seq: sIdx + 1,
           })),
           bom: s.bom.map((b) => ({
-            bomId: b.bomId,
+            bomId: b.bomId.trim(),
             materialId: b.materialId,
             qty: Number(b.qty) || 0,
             uom: b.uom,
           })),
         })),
       });
+
       toast(res);
       if (res.ok) {
         setIsDesigning(false);
@@ -230,21 +243,34 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
     updateStage(stageIndex, { bom: nextBom });
   };
 
+  const totalBomLines = isDesigning
+    ? draftStages.reduce((acc, s) => acc + s.bom.length, 0)
+    : recipe.bomCount;
+
   return (
-    <div className="mx-auto max-w-[1000px]">
-      <Link href="/recipes" className="mb-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-ink">
+    <div className="mx-auto max-w-[1020px]">
+      <Link href="/recipes" className="mb-3.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-amber-ink hover:underline">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
           <path d="M15 18l-6-6 6-6" />
         </svg>
         All recipes
       </Link>
 
+      {/* Main Header Card */}
       <div className="mb-[18px] rounded-[14px] border border-border bg-panel px-6 py-[22px] shadow-[0_1px_2px_rgba(74,50,34,.04)]">
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div>
-            <div className="mb-1.5 font-mono text-[21px] font-semibold text-espresso-deep">{recipe.recipeId}</div>
-            <div className="text-[15px] font-medium text-ink">
-              {recipe.product} <span className="font-mono text-[12px] font-normal text-faint">{recipe.productId}</span>
+            <div className="mb-1.5 flex items-center gap-2.5">
+              <span className="font-mono text-[21px] font-semibold text-espresso-deep">{recipe.recipeId}</span>
+              <span className="rounded bg-panel-2 px-2 py-0.5 font-mono text-[11.5px] font-bold text-amber-ink">
+                v{recipe.version}
+              </span>
+              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                {recipe.status}
+              </span>
+            </div>
+            <div className="text-[15px] font-semibold text-ink">
+              {recipe.product} <span className="font-mono text-[12px] font-normal text-faint">({recipe.productId})</span>
             </div>
             {recipe.note && <div className="mt-1 text-[12.5px] text-muted">{recipe.note}</div>}
           </div>
@@ -283,14 +309,23 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line">
+        {/* 4-Item Stat Metric Bar */}
+        <div className="mt-5 grid grid-cols-4 gap-px overflow-hidden rounded-[10px] border border-line bg-line">
           <div className="bg-panel px-4 py-[13px]">
-            <div className="mb-1 text-[10.5px] uppercase tracking-[.8px] text-faint">Base size</div>
+            <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[.8px] text-faint">Base size</div>
             <div className="font-mono text-[14px] font-semibold text-ink">{recipe.baseSize} {recipe.uom}</div>
           </div>
           <div className="bg-panel px-4 py-[13px]">
-            <div className="mb-1 text-[10.5px] uppercase tracking-[.8px] text-faint">Expected yield</div>
+            <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[.8px] text-faint">Expected yield</div>
             <div className="font-mono text-[14px] font-semibold text-ink">{recipe.yieldPct ?? "—"}%</div>
+          </div>
+          <div className="bg-panel px-4 py-[13px]">
+            <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[.8px] text-faint">Stages</div>
+            <div className="font-mono text-[14px] font-semibold text-ink">{isDesigning ? draftStages.length : recipe.stageCount}</div>
+          </div>
+          <div className="bg-panel px-4 py-[13px]">
+            <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[.8px] text-faint">Total BOM lines</div>
+            <div className="font-mono text-[14px] font-semibold text-ink">{totalBomLines}</div>
           </div>
         </div>
       </div>
@@ -301,7 +336,9 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
           {recipe.stages.map((s) => (
             <div key={s.id} className="mb-3.5 overflow-hidden rounded-[14px] border border-border bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
               <div className="flex items-center gap-3 border-b border-line bg-[#faf6ee] px-5 py-[15px]">
-                <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-lg bg-espresso font-mono text-[12px] font-semibold text-white">{s.seq}</span>
+                <span className="flex h-[26px] w-[26px] flex-none items-center justify-center rounded-lg bg-espresso font-mono text-[12px] font-semibold text-white">
+                  {s.seq}
+                </span>
                 <div className="flex-1">
                   <div className="text-[14px] font-semibold text-ink">{s.name}</div>
                   <div className="mt-px text-[11.5px] text-faint">
@@ -319,17 +356,23 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
                 )}
               </div>
               <div className="px-5 pb-3.5 pt-1.5">
-                <div className="flex justify-between py-2.5 text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]">
-                  <span>BOM ID · material</span>
-                  <span>Quantity</span>
+                <div className="flex items-center gap-2.5 py-2.5 text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]">
+                  <span className="w-[140px] ml-1 flex-shrink-0 font-bold">eBR BOM ID</span>
+                  <span className="flex-1 min-w-0 font-bold">Assigned material</span>
+                  <span className="w-[210px] flex-shrink-0 text-right font-bold pr-16">Quantity</span>
                 </div>
                 {s.bom.map((b) => (
-                  <div key={b.bomId} className="flex items-baseline justify-between gap-3 border-t border-[#f2ebdd] py-2.5">
-                    <div className="flex items-baseline gap-2.5">
-                      <span className="rounded-[5px] bg-panel-2 px-[7px] py-0.5 font-mono text-[11px] text-amber-ink">{b.bomId}</span>
-                      <span className="text-[13px] text-ink">{b.material}</span> <span className="font-mono text-[11px] text-faint">{b.materialId}</span>
+                  <div key={b.bomId} className="flex items-center gap-2.5 border-t border-[#f2ebdd] py-2.5">
+                    <span className="w-[140px] rounded-[5px] bg-panel-2 px-[7px] py-0.5 font-mono text-[11.5px] font-semibold text-amber-ink flex-shrink-0">
+                      {b.bomId}
+                    </span>
+                    <div className="flex-1 min-w-0 truncate">
+                      <span className="text-[13px] font-semibold text-ink">{b.material}</span>{" "}
+                      <span className="font-mono text-[11px] text-faint">({b.materialId})</span>
                     </div>
-                    <div className="font-mono text-[12.5px] text-ink">{b.qty} <span className="text-faint">{b.uom}</span></div>
+                    <div className="w-[210px] flex-shrink-0 text-right font-mono text-[12.5px] font-semibold text-espresso pr-16">
+                      {b.qty} <span className="font-normal text-muted">{b.uom}</span>
+                    </div>
                   </div>
                 ))}
                 {s.bom.length === 0 && <div className="border-t border-[#f2ebdd] py-3 text-center text-[12px] text-faint">No BOM lines.</div>}
@@ -381,7 +424,7 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
                   <button
                     type="button"
                     onClick={() => addSubStage(sIndex)}
-                    className="inline-flex items-center gap-1 rounded-md border border-[#d8ccb8] bg-panel px-2.5 py-1.5 text-[11.5px] font-semibold text-ink hover:bg-panel-2 focus:outline-none"
+                    className="inline-flex items-center gap-1 rounded-md border border-[#d8ccb8] bg-panel px-2.5 py-1.5 text-[11.5px] font-semibold text-ink hover:bg-panel-2 focus:outline-none transition-colors"
                   >
                     + Sub-stage
                   </button>
@@ -389,7 +432,7 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
                     type="button"
                     onClick={() => deleteStage(sIndex)}
                     title="Delete stage"
-                    className="rounded-md border border-[#e8dcd0] p-1.5 text-muted hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:outline-none"
+                    className="rounded-md border border-[#e8dcd0] p-1.5 text-muted hover:border-red-300 hover:bg-red-50 hover:text-red-600 focus:outline-none transition-colors"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -505,4 +548,3 @@ export function RecipeDetail({ recipe, materials }: { recipe: RecipeVM; material
     </div>
   );
 }
-

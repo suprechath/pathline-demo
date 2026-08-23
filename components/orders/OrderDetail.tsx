@@ -2,19 +2,34 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { OrderVM, EventVM } from "@/lib/domain/types";
+import type { OrderVM, EventVM, OrderIntegrationErrorVM, MaterialVM, LotVM } from "@/lib/domain/types";
+import type { RecipeVM } from "@/lib/data/recipes";
 import { sendToBatchline, simulateBatch } from "@/app/orders/actions";
 import { Pill } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
 import { ExecutionTimeline } from "./ExecutionTimeline";
 import { YieldPanel } from "./YieldPanel";
-import { PayloadPeek } from "./PayloadPeek";
+import { OrderWizard } from "./OrderWizard";
 import { toast } from "@/components/ui/Toast";
 
-export function OrderDetail({ order, initialEvents }: { order: OrderVM; initialEvents: EventVM[] }) {
+export function OrderDetail({
+  order,
+  initialEvents,
+  lastError,
+  materials = [],
+  lots = [],
+  recipes = [],
+}: {
+  order: OrderVM;
+  initialEvents: EventVM[];
+  lastError?: OrderIntegrationErrorVM | null;
+  materials?: MaterialVM[];
+  lots?: LotVM[];
+  recipes?: RecipeVM[];
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [payloadOpen, setPayloadOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [events, setEvents] = useState<EventVM[]>(initialEvents);
   const [running, setRunning] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -73,15 +88,16 @@ export function OrderDetail({ order, initialEvents }: { order: OrderVM; initialE
             <div className="text-[15px] font-medium text-ink">{order.product} <span className="font-mono text-[12px] font-normal text-faint">{order.productId}</span></div>
           </div>
           <div className="flex flex-wrap gap-2.5">
-            <Button variant="outline" onClick={() => setPayloadOpen(true)}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg>
-              View API payload
-            </Button>
             {!order.sent && (
-              <Button variant="batchline" disabled={!order.fullyAssigned || pending} onClick={onSend}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z" /></svg>
-                Send to Batchline
-              </Button>
+              <>
+                <Button variant="primary" onClick={() => setEditOpen(true)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                  Edit Order
+                </Button>
+              </>
             )}
             {order.sent && (
               <Button variant="batchline" disabled={running || pending || !showSim} onClick={onSimulate}>
@@ -101,6 +117,70 @@ export function OrderDetail({ order, initialEvents }: { order: OrderVM; initialE
           ))}
         </div>
       </div>
+
+      {/* Batchline Integration Error Banner */}
+      {lastError && !order.sent && (
+        <div className="mb-[18px] rounded-[14px] border border-[#f0c8c4] bg-[#fff5f4] p-5 shadow-[0_1px_2px_rgba(200,60,40,.06)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fde8e6] text-[#b3261e]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-[#8c1d18] text-[14px]">
+                    Batchline API Transmission Failed {lastError.status ? `(HTTP ${lastError.status})` : ""}
+                  </span>
+                  <span className="rounded border border-[#f0c8c4] bg-[#fde8e6] px-1.5 py-0.5 font-mono text-[11px] text-[#b3261e]">
+                    {new Date(lastError.createdAt).toLocaleTimeString()}
+                  </span>
+                </div>
+                {lastError.errorDetail.includes("|") ? (
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-[13px] text-[#5c1d1a] leading-relaxed">
+                    {lastError.errorDetail
+                      .split("|")
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+                      .map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-[13px] text-[#5c1d1a] leading-relaxed">
+                    {lastError.errorDetail}
+                  </p>
+                )}
+                <div className="mt-2 text-[11.5px] text-[#8c504a]">
+                  This order was saved in Pathline ERP as <strong>DRAFT</strong>. Click <strong>Edit Order</strong> above to adjust parameters and re-send to Batchline.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Collapsible raw error body preview */}
+          {lastError.responseBody && (
+            <div className="mt-3.5 border-t border-[#f5d0cc] pt-3">
+              <details className="group">
+                <summary className="cursor-pointer text-[12px] font-medium text-[#a8251e] hover:text-[#7d1712] flex items-center gap-1.5 select-none">
+                  <svg className="transition-transform group-open:rotate-90" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  View full Batchline API error response body
+                </summary>
+                <pre className="mt-2.5 max-h-56 overflow-auto rounded-lg border border-[#edd2ce] bg-white/95 p-3.5 font-mono text-[11.5px] leading-relaxed text-[#4a1c18] select-all shadow-inner">
+                  {typeof lastError.responseBody === "object"
+                    ? JSON.stringify(lastError.responseBody, null, 2)
+                    : String(lastError.responseBody)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start gap-[18px] max-lg:grid-cols-1">
         {/* BOM */}
@@ -151,7 +231,21 @@ export function OrderDetail({ order, initialEvents }: { order: OrderVM; initialE
         </div>
       </div>
 
-      <PayloadPeek open={payloadOpen} onClose={() => setPayloadOpen(false)} order={order} />
+      {/* Edit Order Modal */}
+      {editOpen && (
+        <OrderWizard
+          key={`edit-${order.orderNo}-${order.size}-${editOpen}`}
+          open={editOpen}
+          onClose={() => {
+            setEditOpen(false);
+            router.refresh();
+          }}
+          materials={materials}
+          lots={lots}
+          recipes={recipes}
+          initialOrder={order}
+        />
+      )}
     </div>
   );
 }

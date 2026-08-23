@@ -60,6 +60,7 @@ export interface OrderVM {
   planEnd: string;
   status: OrderStatus;
   sent: boolean; // derived from status
+  erpRecipeId?: string | null;
   stageName: string;
   fullyAssigned: boolean;
   readyToSend: boolean; // persisted flag, mirrors fullyAssigned
@@ -84,3 +85,11 @@ export interface EventVM {
   exceptionLevel: string | null;
   batchStatus: OrderStatus | null;
 }
+
+export interface OrderIntegrationErrorVM {
+  status: number | null;
+  errorDetail: string;
+  responseBody: any;
+  createdAt: string;
+}
+

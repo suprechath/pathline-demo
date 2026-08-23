@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { toOrderVM, toEventVM } from "@/lib/domain/mappers";
-import type { OrderVM, EventVM } from "@/lib/domain/types";
+import type { OrderVM, EventVM, OrderIntegrationErrorVM } from "@/lib/domain/types";
 
 const fullInclude = {
   productMaterial: true,
@@ -30,6 +30,24 @@ export async function getOrder(orderNo: string): Promise<OrderVM | null> {
     include: fullInclude,
   });
   return row ? toOrderVM(row) : null;
+}
+
+export async function getLatestOrderError(orderNo: string): Promise<OrderIntegrationErrorVM | null> {
+  const msg = await prisma.integrationMessage.findFirst({
+    where: {
+      entityRef: orderNo,
+      direction: "OUTBOUND",
+      status: "FAILED",
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!msg) return null;
+  return {
+    status: msg.httpStatus,
+    errorDetail: msg.reason || "Batchline API call failed",
+    responseBody: msg.response,
+    createdAt: msg.createdAt.toISOString(),
+  };
 }
 
 export async function getEvents(orderNo: string): Promise<EventVM[]> {
