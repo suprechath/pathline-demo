@@ -5,11 +5,13 @@ import type { EventKind, Prisma } from "@prisma/client";
 // Inbound: Batchline -> Pathline. The simulator (and, in production, the real
 // plant) POSTs here. Writes an ExecutionEvent, advances order status/yield,
 // and logs the inbound IntegrationMessage.
+// http://<your-host>/api/batchline/webhook
 export async function POST(req: Request) {
-  const apiKey = req.headers.get("x-api-key");
-  if (apiKey !== (process.env.BATCHLINE_API_KEY ?? "local-demo-key")) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  // This is API authen
+  // const apiKey = req.headers.get("x-api-key");
+  // if (apiKey !== (process.env.BATCHLINE_API_KEY ?? "local-demo-key")) {
+  //   return new Response("Unauthorized", { status: 401 });
+  // }
 
   let body: WebhookEvent;
   try {
@@ -19,7 +21,23 @@ export async function POST(req: Request) {
   }
 
   const order = await prisma.processOrder.findUnique({ where: { orderNo: body.process_number } });
-  if (!order) return new Response("Unknown order", { status: 404 });
+  if (!order) {
+    console.warn(`[INBOUND WEBHOOK WARNING] Unknown process_number: "${body.process_number}". No matching order found in database.`);
+    await prisma.integrationMessage.create({
+      data: {
+        direction: "INBOUND",
+        endpoint: "/api/batchline/webhook",
+        method: "POST",
+        entityType: "batch",
+        entityRef: body.process_number ?? "UNKNOWN",
+        status: "FAILED",
+        httpStatus: 404,
+        reason: `Unknown process_number: ${body.process_number}`,
+        response: body as unknown as object,
+      },
+    });
+    return new Response(`Unknown order: ${body.process_number}`, { status: 404 });
+  }
 
   const kind: EventKind =
     body.topic === "batch_status.update" ? "BATCH_STATUS" : body.has_exception ? "EXCEPTION" : "INSTRUCTION";
@@ -99,6 +117,8 @@ export async function POST(req: Request) {
   );
 
   await prisma.$transaction(writes);
+
+  console.log(`[INBOUND WEBHOOK SUCCESS] Event recorded for order ${order.orderNo} (Status: ${body.batch_status ?? "unchanged"}, Seq: ${body.seq}, Title: "${body.title}")\n`);
 
   return Response.json({ ok: true, seq: body.seq });
 }
