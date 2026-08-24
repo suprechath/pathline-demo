@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db/prisma";
 import { evalVerdict } from "@/lib/data/lims";
-import { returnDisposition } from "@/lib/batchline/ebr-client";
+import { returnDisposition, extractEbrErrorDetail } from "@/lib/batchline/ebr-client";
 import type { ActionResult } from "@/app/materials/actions";
 
 // Sample id assigned by the LIMS when a request arrives from the EBR.
@@ -11,15 +11,53 @@ function genSampleId() {
   return `IPC-26-${n}`;
 }
 
-// EBR → LIMS: a hold point request arrives. Persisted against a stored spec.
+export interface DynamicSpecInput {
+  code?: string;
+  testName?: string;
+  test_name?: string;
+  parameter?: string;
+  limitType?: "MAX" | "MIN" | "RANGE";
+  limit_type?: "MAX" | "MIN" | "RANGE";
+  lower?: number | null;
+  upper?: number | null;
+  unit?: string;
+  limitText?: string;
+  limit_text?: string;
+}
+
+// EBR → LIMS: a hold point request arrives. Persisted against a stored spec or dynamic payload.
 export async function receiveHoldRequest(input: {
   batchId: string;
   stageName: string;
   gateStep?: string;
-  specCode: string;
+  specCode?: string;
+  specification?: DynamicSpecInput;
   ebrRequestRef?: string;
 }): Promise<ActionResult & { sampleId?: string }> {
-  const spec = await prisma.qcSpecification.findUnique({ where: { code: input.specCode } });
+  const specCode = input.specification?.code ?? input.specCode ?? `SPEC-${Date.now()}`;
+  let spec = await prisma.qcSpecification.findUnique({ where: { code: specCode } });
+
+  if (input.specification) {
+    const s = input.specification;
+    const testName = s.testName ?? s.test_name ?? s.parameter ?? specCode;
+    const parameter = s.parameter ?? s.testName ?? s.test_name ?? "In-process IPC limit";
+    const lower = s.lower != null ? Number(s.lower) : null;
+    const upper = s.upper != null ? Number(s.upper) : null;
+    const limitType = (s.limitType ?? s.limit_type ?? (lower != null && upper != null ? "RANGE" : upper != null ? "MAX" : "MIN")) as "MAX" | "MIN" | "RANGE";
+    const unit = s.unit ?? "";
+    const limitText = s.limitText ?? s.limit_text ?? (
+      limitType === "RANGE" ? `${lower} – ${upper} ${unit}`.trim() :
+        limitType === "MAX" ? `≤ ${upper} ${unit}`.trim() :
+          `≥ ${lower} ${unit}`.trim()
+    );
+
+    spec = await prisma.qcSpecification.upsert({
+      where: { code: specCode },
+      create: { code: specCode, testName, parameter, limitType, lower, upper, unit, limitText },
+      update: { testName, parameter, limitType, lower, upper, unit, limitText },
+    });
+  }
+
   if (!spec) return { ok: false, message: `Unknown specification ${input.specCode}`, system: "batchline" };
 
   const hp = await prisma.holdPoint.create({
@@ -66,7 +104,22 @@ export async function recordResult(input: {
     input.measuredValue,
   );
 
-  const ebr = await returnDisposition({ batchId: hp.batchId, sampleId: hp.sampleId, verdict });
+  const ebr = await returnDisposition({
+    batchId: hp.batchId,
+    sampleId: hp.sampleId,
+    gateStep: hp.gateStep,
+    measuredValue: input.measuredValue,
+    verdict,
+  });
+
+  if (!ebr.ok) {
+    const errorDetail = ebr.errorDetail ?? extractEbrErrorDetail(ebr.responseData, ebr.httpStatus);
+    return {
+      ok: false,
+      message: `Failed to return disposition to Batchline EBR \n- (${errorDetail}). \n Result not recorded.`,
+      system: "batchline",
+    };
+  }
 
   await prisma.$transaction([
     prisma.qcResult.create({

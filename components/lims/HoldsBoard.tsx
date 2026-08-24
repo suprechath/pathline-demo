@@ -35,6 +35,9 @@ export function HoldsBoard({ holds, stats }: { holds: HoldVM[]; stats: { onHold:
     start(async () => {
       const res = await fn();
       toast(res);
+      if (!res.ok) {
+        alert(res.message);
+      }
       if (res.ok) {
         if (close) setSelId(null);
         router.refresh();
