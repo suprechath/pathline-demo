@@ -28,11 +28,23 @@ export async function receiveLot(form: FormData): Promise<ActionResult> {
   try {
     const lot = await prisma.lot.create({
       data: {
-        lotId, materialId: material.id, quantity,
+        lotId,
+        materialId: material.id,
+        quantity,
         uom: material.uom, // inherited from material
         location: location ?? null,
         expiry: expiry ? new Date(expiry) : null,
         status: "IN_STOCK",
+        movements: {
+          create: [
+            {
+              reason: "RECEIPT",
+              quantity: quantity,
+              note: `Goods receipt (${quantity} ${material.uom})`,
+              user: "warehouse",
+            },
+          ],
+        },
       },
     });
     revalidatePath("/inventory");

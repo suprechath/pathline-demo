@@ -30,8 +30,14 @@ export function toMaterialVM(m: Material): MaterialVM {
   };
 }
 
-export function toLotVM(l: Lot & { material: Material }): LotVM {
+export function toLotVM(l: Lot & { material: Material; movements?: Prisma.StockMovementGetPayload<object>[] }): LotVM {
   const expired = l.status === "EXPIRED" || (!!l.expiry && l.expiry.getTime() < Date.now());
+  let availableQty = Number(l.quantity);
+  if (l.movements && l.movements.length > 0) {
+    const onHand = l.movements.reduce((s, m) => (m.reason === "RESERVE" || m.reason === "RELEASE" ? s : s + Number(m.quantity)), 0);
+    const reserved = l.movements.reduce((s, m) => s + (m.reason === "RESERVE" ? Number(m.quantity) : m.reason === "RELEASE" ? -Math.abs(Number(m.quantity)) : 0), 0);
+    availableQty = Math.max(0, onHand - Math.max(0, reserved));
+  }
   return {
     id: l.id,
     lotId: l.lotId,
@@ -43,7 +49,7 @@ export function toLotVM(l: Lot & { material: Material }): LotVM {
     expiry: l.expiry ? l.expiry.toISOString().slice(0, 10) : null,
     expired,
     status: expired ? "EXPIRED" : l.status,
-    assignable: !expired && (l.status === "IN_STOCK" || l.status === "RESERVED"),
+    assignable: !expired && (l.status === "IN_STOCK" || l.status === "RESERVED") && availableQty > 0,
   };
 }
 

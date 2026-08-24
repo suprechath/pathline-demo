@@ -7,7 +7,7 @@ const MAP: Record<string, PillTone> = {
   PLANNED: { label: "Planned", bg: "#f3e4c8", fg: "#9a6516" },
   STARTED: { label: "Started", bg: "#f0dcc0", fg: "#a0611f" },
   COMPLETED: { label: "Completed", bg: "#f3e4c8", fg: "#9a6516" },
-  REVIEWED: { label: "Reviewed / Closed", bg: "#e2e8d5", fg: "#556b2c" },
+  REVIEWED: { label: "Approved", bg: "#e2e8d5", fg: "#556b2c" },
   CANCELLED: { label: "Cancelled", bg: "#eddad3", fg: "#a8432a" },
   IN_STOCK: { label: "In stock", bg: "#e2e8d5", fg: "#556b2c" },
   RESERVED: { label: "Reserved", bg: "#f3e4c8", fg: "#9a6516" },

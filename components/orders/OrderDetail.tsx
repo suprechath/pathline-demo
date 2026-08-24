@@ -35,7 +35,38 @@ export function OrderDetail({
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => setEvents(initialEvents), [initialEvents]);
-  useEffect(() => () => esRef.current?.close(), []);
+
+  // Auto-connect to SSE stream whenever order is sent
+  useEffect(() => {
+    if (!order.sent) return;
+
+    if (!esRef.current) {
+      const es = new EventSource(`/orders/${order.orderNo}/stream`);
+      esRef.current = es;
+
+      es.addEventListener("execution", (e) => {
+        const ev = JSON.parse((e as MessageEvent).data) as EventVM;
+        setEvents((prev) => {
+          if (prev.some((p) => p.id === ev.id || (p.seq === ev.seq && p.title === ev.title))) {
+            return prev;
+          }
+          return [...prev, ev];
+        });
+        if (ev.batchStatus || ev.lotRef || ev.actualValue) {
+          router.refresh();
+        }
+      });
+
+      es.onerror = () => {
+        // EventSource automatically retries connection
+      };
+    }
+
+    return () => {
+      esRef.current?.close();
+      esRef.current = null;
+    };
+  }, [order.sent, order.orderNo, router]);
 
   const stats = [
     { k: "Batch ID", v: order.batchId ?? "—" },
@@ -59,14 +90,26 @@ export function OrderDetail({
       setEvents([]);
       setRunning(true);
       esRef.current?.close();
+      esRef.current = null;
       const es = new EventSource(`/orders/${order.orderNo}/stream`);
       esRef.current = es;
       es.addEventListener("execution", (e) => {
         const ev = JSON.parse((e as MessageEvent).data) as EventVM;
-        setEvents((prev) => (prev.some((p) => p.seq === ev.seq) ? prev : [...prev, ev]));
+        setEvents((prev) => {
+          if (prev.some((p) => p.id === ev.id || (p.seq === ev.seq && p.title === ev.title))) {
+            return prev;
+          }
+          return [...prev, ev];
+        });
+        if (ev.batchStatus || ev.lotRef || ev.actualValue) {
+          router.refresh();
+        }
       });
-      es.addEventListener("done", () => { es.close(); setRunning(false); router.refresh(); });
-      es.onerror = () => { es.close(); setRunning(false); };
+      es.onerror = () => {
+        es.close();
+        esRef.current = null;
+        setRunning(false);
+      };
     });
 
   const showSim = order.sent && !running && (order.status === "PLANNED" || order.status === "STARTED" || order.status === "COMPLETED");
@@ -190,13 +233,13 @@ export function OrderDetail({
 
       <div className="grid grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start gap-[18px] max-lg:grid-cols-1">
         {/* BOM */}
-        <div className="h-[600px] overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
-          <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px]">
+        <div className="h-[600px] flex flex-col overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
+          <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px] shrink-0">
             <span className="h-2.5 w-2.5 rounded-[3px] bg-espresso" />
             <span className="text-[14px] font-semibold text-ink">Bill of materials</span>
             <span className="ml-auto text-[11.5px] text-faint">Stage · {order.stageName}</span>
           </div>
-          <div className="px-5 pb-[18px] pt-1.5">
+          <div className="flex-1 overflow-y-auto px-5 pb-[18px] pt-1.5">
             {order.bom.map((b) => {
               const requiredNum = Number(b.required) || 1;
               const totalConsumedForLine = b.lots.reduce((sum, la) => {
@@ -309,18 +352,20 @@ export function OrderDetail({
         </div>
 
         {/* Execution */}
-        <div className="h-[600px] overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
-          <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px]">
+        <div className="h-[600px] flex flex-col overflow-hidden rounded-[10px] border border-black/20 bg-panel shadow-[0_1px_2px_rgba(74,50,34,.04)]">
+          <div className="flex items-center gap-2.5 border-b border-line px-5 py-[15px] shrink-0">
             <span className="h-2.5 w-2.5 rounded-[3px] bg-amber" />
             <span className="text-[14px] font-semibold text-ink">Execution</span>
             <span className="ml-auto font-mono text-[11px] text-faint">SSE · /stream</span>
           </div>
           <YieldPanel order={order} />
-          <ExecutionTimeline
-            events={events}
-            running={running}
-            emptyMsg={order.sent ? "Order is live at Batchline. Click Simulate to stream execution back over SSE." : "Send this order to Batchline to begin execution."}
-          />
+          <div className="flex-1 overflow-y-auto">
+            <ExecutionTimeline
+              events={events}
+              running={running}
+              emptyMsg={order.sent ? "Order is live at Batchline. Click Simulate to stream execution back over SSE." : "Send this order to Batchline to begin execution."}
+            />
+          </div>
         </div>
       </div>
 

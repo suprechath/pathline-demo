@@ -44,7 +44,7 @@ export function Th({
       style={style}
       onClick={onClick}
       className={clsx(
-        "bg-panel-2 px-[18px] py-3 text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]",
+        "bg-panel-2 px-[10px] py-3 text-[10.5px] font-semibold uppercase tracking-[.8px] text-[#93856f]",
         sticky && "sticky top-0 z-10 border-b border-border shadow-[0_1px_0_#e6dbcb]",
         right ? "text-right" : "text-left",
         className,
@@ -71,7 +71,7 @@ export function Td({
   return (
     <td
       style={style}
-      className={clsx("border-t border-line px-[18px] py-[13px]", mono && "font-mono", right && "text-right", className)}
+      className={clsx("border-t border-line px-[8px] py-[13px]", mono && "font-mono", right && "text-right", className)}
     >
       {children}
     </td>

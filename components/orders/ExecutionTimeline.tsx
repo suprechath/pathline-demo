@@ -24,7 +24,7 @@ function EvIcon({ kind }: { kind: string }) {
 
 export function ExecutionTimeline({ events, emptyMsg, running }: { events: EventVM[]; emptyMsg: string; running: boolean }) {
   return (
-    <div className="max-h-[520px] overflow-auto px-5 pb-5 pt-2.5">
+    <div className="px-5 pb-5 pt-2.5">
       {events.length === 0 ? (
         <div className="px-5 py-11 text-center text-faint">
           <div className="mx-auto mb-3.5 flex h-[52px] w-[52px] items-center justify-center rounded-[14px] bg-panel-2">

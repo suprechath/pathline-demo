@@ -5,7 +5,7 @@ import type { LotVM } from "@/lib/domain/types";
 
 export async function getLots(): Promise<LotVM[]> {
   const rows = await prisma.lot.findMany({
-    include: { material: true },
+    include: { material: true, movements: true },
     orderBy: { createdAt: "desc" },
   });
   return rows.map(toLotVM);
