@@ -329,7 +329,6 @@ export async function createAndSendOrderToBatchline(
   }
 
   // 6. If Batchline API succeeds, transition to PLANNED and reserve stock
-  const batchId = `${product.materialId}_${Math.floor(Math.random() * 40) + 10}`;
   const reserveMoves = input.lines.flatMap((line) =>
     line.lots.map((alloc) => ({
       lotId: lotBy.get(alloc.lotId)!.id,
@@ -344,7 +343,6 @@ export async function createAndSendOrderToBatchline(
     prisma.processOrder.update({
       where: { orderNo: input.orderNo.trim() },
       data: {
-        batchId,
         status: "PLANNED",
         sent: true,
       },
@@ -518,7 +516,6 @@ export async function updateDraftOrder(
   }
 
   // 6. If Batchline API succeeds, transition to PLANNED and reserve stock
-  const batchId = `${product.materialId}_${Math.floor(Math.random() * 40) + 10}`;
   const reserveMoves = input.lines.flatMap((line) =>
     line.lots.map((alloc) => ({
       lotId: lotBy.get(alloc.lotId)!.id,
@@ -533,7 +530,6 @@ export async function updateDraftOrder(
     prisma.processOrder.update({
       where: { orderNo: input.orderNo.trim() },
       data: {
-        batchId,
         status: "PLANNED",
         sent: true,
       },
@@ -578,25 +574,24 @@ export async function sendToBatchline(orderNo: string): Promise<ActionResult> {
     plan_end_date: formatIsoWithTimezone(order.planEnd),
     customer_product_name: order.product,
     product_description: order.product,
+    recipe_id: order.erpRecipeId ?? "",
     product_lot_number: productLotNumber,
-    estimate_time: calculateEstimateWeeks(order.planStart, order.planEnd),
-    registration_number: "",
-    erp_order_number: order.orderNo,
-    bin_id: null,
-    remark: "Order created by Partline",
-    erp_recipe_id: order.erpRecipeId ?? "",
-    process_stage_bom_data: order.bom.map((b) => ({
-      bom_id: b.bomId,
-      bom_material_id: b.materialId,
-      bom_quantity: Number(b.required),
-      bom_uom: b.uom,
-      bom_lot: b.lots.map((l) => {
-        const lotRecord = lotBy.get(l.lotId);
+    message_mode: "RECIPE_WITH_LOTS",
+    parameters: [],
+    stages: (order.bom.length > 0 ? [order.stageName] : []).map((stName) => ({
+      stage_name: stName,
+      stage_seq: 1,
+      target_size: Number(order.size),
+      target_size_uom: order.uom,
+      boms: order.bom.map((b) => {
+        const lotRecord = lots.find((l) => l.materialId === b.materialId);
         return {
-          lot_id: l.lotId,
-          lot_location: sanitizeLotLocation(lotRecord?.location),
-          lot_quantity: Number(l.quantity),
-          lot_quantity_uom: lotRecord?.uom ?? b.uom,
+          bom_id: b.bomId,
+          material_id: b.materialId,
+          material_name: b.material,
+          allocated_quantity: Number(b.required),
+          allocated_quantity_uom: b.uom,
+          lot_id: b.lots[0]?.lotId ?? "",
           lot_expiration_date: lotRecord?.expiry ? formatIsoWithTimezone(lotRecord.expiry) : "",
         };
       }),
@@ -612,7 +607,6 @@ export async function sendToBatchline(orderNo: string): Promise<ActionResult> {
     };
   }
 
-  const batchId = `${order.productId}_${Math.floor(Math.random() * 40) + 10}`;
   const stage = await prisma.stage.findFirst({
     where: { orderId: order.id },
     include: { bomLines: { include: { assignments: true } } },
@@ -630,7 +624,7 @@ export async function sendToBatchline(orderNo: string): Promise<ActionResult> {
   await prisma.$transaction([
     prisma.processOrder.update({
       where: { orderNo },
-      data: { batchId, status: "PLANNED", sent: true },
+      data: { status: "PLANNED", sent: true },
     }),
     ...reserveMoves.map((data) => prisma.stockMovement.create({ data })),
   ]);
@@ -644,7 +638,7 @@ export async function sendToBatchline(orderNo: string): Promise<ActionResult> {
 // Kicks the Batchline simulator
 export async function simulateBatch(orderNo: string): Promise<ActionResult> {
   const order = await getOrder(orderNo);
-  if (!order || !order.batchId) return { ok: false, message: "Send the order first", system: "pathline" };
+  if (!order || !order.sent) return { ok: false, message: "Send the order first", system: "pathline" };
 
   // clean re-run
   await prisma.executionEvent.deleteMany({ where: { order: { orderNo } } });

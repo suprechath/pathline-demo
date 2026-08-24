@@ -49,4 +49,5 @@ export interface WebhookEvent {
   exception_level?: string;
   executed_user?: string;
   yield_actual?: string;
+  expiry_date?: string;
 }

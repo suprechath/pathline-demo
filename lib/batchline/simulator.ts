@@ -34,7 +34,8 @@ export async function runSimulation(order: OrderVM) {
   const script = buildBatchScript(order);
   for (let i = 0; i < script.length; i++) {
     await sleep(DELAYS[i] ?? 1000);
-    const event: WebhookEvent = { ...script[i], batch_id: order.batchId ?? "", process_number: order.orderNo };
+    const simBatchId = order.batchId || `${order.productId}_${Math.floor(Math.random() * 40) + 10}`;
+    const event: WebhookEvent = { ...script[i], batch_id: simBatchId, process_number: order.orderNo };
     try {
       await fetch(`${BASE_URL}/api/batchline/webhook`, {
         method: "POST",

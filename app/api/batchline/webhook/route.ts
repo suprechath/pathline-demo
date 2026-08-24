@@ -20,7 +20,10 @@ export async function POST(req: Request) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const order = await prisma.processOrder.findUnique({ where: { orderNo: body.process_number } });
+  const order = await prisma.processOrder.findUnique({
+    where: { orderNo: body.process_number },
+    include: { productMaterial: true },
+  });
   if (!order) {
     console.warn(`[INBOUND WEBHOOK WARNING] Unknown process_number: "${body.process_number}". No matching order found in database.`);
     await prisma.integrationMessage.create({
@@ -69,16 +72,145 @@ export async function POST(req: Request) {
     }),
   );
 
+  if (body.batch_id && body.batch_id !== order.batchId) {
+    writes.push(
+      prisma.processOrder.update({
+        where: { id: order.id },
+        data: { batchId: body.batch_id },
+      }),
+    );
+  }
+
   if (body.batch_status) {
     writes.push(
       prisma.processOrder.update({
         where: { id: order.id },
         data: {
           status: body.batch_status,
+          ...(body.batch_id ? { batchId: body.batch_id } : {}),
           ...(body.yield_actual ? { yieldActual: body.yield_actual, yieldPlan: order.size } : {}),
         },
       }),
     );
+
+    // Compute finished goods lot parameters (Lot ID, Yield Qty, Expiry)
+    const rawBatchId = order.batchId || body.batch_id || order.orderNo;
+    const fgLotId = rawBatchId.startsWith("LOT-") || rawBatchId.startsWith("lot-") ? rawBatchId : `LOT-${rawBatchId}`;
+    const yieldQty = body.yield_actual
+      ? Number(body.yield_actual)
+      : order.yieldActual
+        ? Number(order.yieldActual)
+        : Number(order.size);
+
+    let exp: Date | null = null;
+    if (body.expiry_date) {
+      exp = new Date(body.expiry_date);
+    } else if (order.productMaterial) {
+      exp = new Date();
+      if (order.productMaterial.shelfLifeUom === "YEARS") {
+        exp.setFullYear(exp.getFullYear() + (order.productMaterial.shelfLife || 2));
+      } else if (order.productMaterial.shelfLifeUom === "MONTHS") {
+        exp.setMonth(exp.getMonth() + (order.productMaterial.shelfLife || 24));
+      } else if (order.productMaterial.shelfLifeUom === "DAYS") {
+        exp.setDate(exp.getDate() + (order.productMaterial.shelfLife || 730));
+      } else {
+        exp.setFullYear(exp.getFullYear() + 2);
+      }
+    }
+
+    // 1. Once COMPLETED: Create or update Finished Goods Lot as QUARANTINE
+    if (body.batch_status === "COMPLETED") {
+      const existingFgLot = await prisma.lot.findUnique({ where: { lotId: fgLotId } });
+      if (!existingFgLot) {
+        writes.push(
+          prisma.lot.create({
+            data: {
+              lotId: fgLotId,
+              materialId: order.productMaterialId,
+              quantity: yieldQty,
+              uom: order.uom,
+              location: "WH-FG / Quarantine",
+              expiry: exp,
+              status: "QUARANTINE",
+              movements: {
+                create: [
+                  {
+                    reason: "RECEIPT",
+                    quantity: yieldQty,
+                    note: `Finished goods receipt from order ${order.orderNo}`,
+                    user: body.executed_user ?? "Batchline MES",
+                  },
+                ],
+              },
+            },
+          })
+        );
+      } else {
+        writes.push(
+          prisma.lot.update({
+            where: { lotId: fgLotId },
+            data: {
+              quantity: yieldQty,
+              status: "QUARANTINE",
+              ...(exp ? { expiry: exp } : {}),
+            },
+          })
+        );
+      }
+    }
+
+    // 2. Once REVIEWED: Transition Finished Goods Lot to IN_STOCK (Unrestricted)
+    if (body.batch_status === "REVIEWED") {
+      const existingFgLot = await prisma.lot.findUnique({ where: { lotId: fgLotId } });
+      if (existingFgLot) {
+        writes.push(
+          prisma.lot.update({
+            where: { lotId: fgLotId },
+            data: {
+              status: "IN_STOCK",
+              location: "WH-FG / Released",
+              ...(exp && !existingFgLot.expiry ? { expiry: exp } : {}),
+            },
+          })
+        );
+        writes.push(
+          prisma.stockMovement.create({
+            data: {
+              lotId: existingFgLot.id,
+              reason: "QC_RELEASE",
+              quantity: 0,
+              note: `QA batch release approved by ${body.executed_user ?? "QA"} for order ${order.orderNo}`,
+              user: body.executed_user ?? "QA",
+            },
+          })
+        );
+      } else {
+        // Direct receipt and release if COMPLETED was skipped
+        writes.push(
+          prisma.lot.create({
+            data: {
+              lotId: fgLotId,
+              materialId: order.productMaterialId,
+              quantity: yieldQty,
+              uom: order.uom,
+              location: "WH-FG / Released",
+              expiry: exp,
+              status: "IN_STOCK",
+              movements: {
+                create: [
+                  {
+                    reason: "RECEIPT",
+                    quantity: yieldQty,
+                    note: `Finished goods receipt & QA release from order ${order.orderNo}`,
+                    user: body.executed_user ?? "QA",
+                  },
+                ],
+              },
+            },
+          })
+        );
+      }
+    }
 
     // If batch was CANCELLED, release any remaining unconsumed inventory reservations
     if (body.batch_status === "CANCELLED") {
@@ -96,8 +228,8 @@ export async function POST(req: Request) {
               (m.reason === "RESERVE"
                 ? Number(m.quantity)
                 : m.reason === "RELEASE"
-                ? -Math.abs(Number(m.quantity))
-                : 0),
+                  ? -Math.abs(Number(m.quantity))
+                  : 0),
             0
           );
         if (reservedForOrder > 0) {
@@ -137,7 +269,15 @@ export async function POST(req: Request) {
         );
       }
       const onHand = lot.movements.reduce((s, m) => s + (m.reason === "RESERVE" || m.reason === "RELEASE" ? 0 : Number(m.quantity)), 0) - actual;
-      if (onHand <= 0) writes.push(prisma.lot.update({ where: { id: lot.id }, data: { status: "CONSUMED" } }));
+      writes.push(
+        prisma.lot.update({
+          where: { id: lot.id },
+          data: {
+            quantity: Math.max(0, onHand),
+            ...(onHand <= 0 ? { status: "CONSUMED" } : {}),
+          },
+        })
+      );
     }
   }
 
