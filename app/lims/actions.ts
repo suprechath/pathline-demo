@@ -60,6 +60,32 @@ export async function receiveHoldRequest(input: {
 
   if (!spec) return { ok: false, message: `Unknown specification ${input.specCode}`, system: "batchline" };
 
+  // Duplicate prevention: reject if this batchId already has a hold point with the same gate_step
+  const gateStepCondition = input.gateStep?.trim()
+    ? { equals: input.gateStep.trim(), mode: "insensitive" as const }
+    : null;
+
+  const existingHold = await prisma.holdPoint.findFirst({
+    where: {
+      batchId: input.batchId,
+      gateStep: gateStepCondition,
+    },
+    select: {
+      sampleId: true,
+      status: true,
+      gateStep: true,
+    },
+  });
+
+  if (existingHold) {
+    const gateLabel = existingHold.gateStep ? `'${existingHold.gateStep}'` : "empty/unspecified gate step";
+    return {
+      ok: false,
+      message: `Hold request rejected: Gate step ${gateLabel} for batch '${input.batchId}' already exists in LIMS (Sample: ${existingHold.sampleId}, Status: ${existingHold.status})`,
+      system: "batchline",
+    };
+  }
+
   const hp = await prisma.holdPoint.create({
     data: {
       sampleId: genSampleId(),
@@ -152,7 +178,7 @@ export async function simulateIncoming(): Promise<ActionResult> {
   const specs = await prisma.qcSpecification.findMany();
   if (specs.length === 0) return { ok: false, message: "No specifications seeded", system: "batchline" };
   const spec = specs[Math.floor(Math.random() * specs.length)];
-  const n = Math.floor(1 + Math.random() * 9);
+  const n = Math.floor(1000 + Math.random() * 9000);
   return receiveHoldRequest({
     batchId: `PARA-CR_${n}`,
     stageName: "Granulation",

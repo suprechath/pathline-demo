@@ -5,6 +5,7 @@ import { orderSchema, allLinesBalanced } from "@/lib/domain/validation";
 import { getOrder } from "@/lib/data/orders";
 import { runSimulation } from "@/lib/batchline/simulator";
 import type { ActionResult } from "@/app/materials/actions";
+import { formatBatchlineErrorDetail } from "@/lib/batchline/errors";
 
 const BATCHLINE_API_KEY = process.env.BATCHLINE_API_KEY ?? "";
 const BATCHLINE_PROCESS_ORDER_CREATE_API_URL =
@@ -72,44 +73,6 @@ function calculateEstimateWeeks(startStr: string, endStr: string): string {
   return `${diffWeeks} weeks`;
 }
 
-function formatErrorDetail(data: any, status: number): string {
-  if (!data) return `HTTP ${status}`;
-  if (typeof data === "string") return data;
-
-  const obj = data.error && typeof data.error === "object" ? data.error : data;
-  const messages: string[] = [];
-
-  if (typeof obj.message === "string" && obj.message.trim()) {
-    messages.push(obj.message.trim());
-  }
-
-  if (Array.isArray(obj.detail)) {
-    messages.push(...obj.detail.map((d: any) => (typeof d === "string" ? d : JSON.stringify(d))));
-  } else if (typeof obj.detail === "string" && obj.detail.trim()) {
-    messages.push(obj.detail.trim());
-  }
-
-  if (Array.isArray(obj.errors)) {
-    messages.push(...obj.errors.map((e: any) => (typeof e === "string" ? e : JSON.stringify(e))));
-  } else if (typeof obj.errors === "object" && obj.errors !== null) {
-    messages.push(JSON.stringify(obj.errors));
-  }
-
-  if (messages.length > 0) {
-    return messages.join(" | ");
-  }
-
-  if (typeof obj.title === "string" && obj.title.trim()) {
-    return obj.title.trim();
-  }
-
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return `HTTP ${status}`;
-  }
-}
-
 interface BatchlineApiCallResult {
   ok: boolean;
   status: number;
@@ -152,7 +115,7 @@ async function callBatchlineProcessOrderCreate(
     isSuccess = false;
   }
 
-  const errorDetail = formatErrorDetail(responseData, responseStatus);
+  const errorDetail = formatBatchlineErrorDetail(responseData, responseStatus);
 
   // Log outbound integration message with error reason string
   await prisma.integrationMessage.create({

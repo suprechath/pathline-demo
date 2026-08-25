@@ -30,12 +30,15 @@ export async function POST(req: Request) {
       limitText?: string;
     };
     test_name?: string;
+    testName?: string;
     parameter?: string;
     limit_type?: "MAX" | "MIN" | "RANGE";
+    limitType?: "MAX" | "MIN" | "RANGE";
     lower?: number;
     upper?: number;
     unit?: string;
     limit_text?: string;
+    limitText?: string;
   };
 
   const res = await receiveHoldRequest({
@@ -43,15 +46,15 @@ export async function POST(req: Request) {
     stageName: body.stage_name ?? body.stageName ?? "In-Process",
     gateStep: body.gate_step ?? body.gateStep,
     specCode: body.spec_code ?? body.specCode,
-    specification: body.specification ?? (body.limit_type || body.lower != null || body.upper != null || body.test_name ? {
+    specification: body.specification ?? (body.limit_type || body.limitType || body.lower != null || body.upper != null || body.test_name || body.testName || body.parameter ? {
       code: body.spec_code ?? body.specCode,
-      test_name: body.test_name,
+      test_name: body.test_name ?? body.testName,
       parameter: body.parameter,
-      limit_type: body.limit_type,
+      limit_type: body.limit_type ?? body.limitType,
       lower: body.lower,
       upper: body.upper,
       unit: body.unit,
-      limit_text: body.limit_text,
+      limit_text: body.limit_text ?? body.limitText,
     } : undefined),
     ebrRequestRef: body.request_ref ?? body.ebr_request_ref ?? body.ebrRequestRef,
   });

@@ -11,6 +11,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ orderNo:
   const encoder = new TextEncoder();
   let closed = false;
   const sentIds = new Set<string>();
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let pingInterval: ReturnType<typeof setInterval> | null = null;
+
+  const cleanup = () => {
+    closed = true;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
+  };
+
+  req.signal.addEventListener("abort", cleanup);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -19,57 +35,65 @@ export async function GET(req: Request, { params }: { params: Promise<{ orderNo:
         try {
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         } catch {
-          closed = true;
+          cleanup();
         }
       };
 
       send("ping", { ok: true });
 
-      // Mark initial events that exist at connect time
+      // Initial events query
       try {
         const initial = await prisma.executionEvent.findMany({
           where: { orderId: order.id },
-          orderBy: { createdAt: "asc" },
+          orderBy: { seq: "asc" },
         });
         for (const e of initial) {
           sentIds.add(e.id);
           send("execution", toEventVM(e));
         }
-      } catch {}
+      } catch {
+        /* proceed to polling */
+      }
 
-      // Fast poll loop for new events
+      // Fast poll loop for new delta events
       const poll = async () => {
         if (closed) return;
         try {
-          const events = await prisma.executionEvent.findMany({
-            where: { orderId: order.id },
-            orderBy: { createdAt: "asc" },
+          const newEvents = await prisma.executionEvent.findMany({
+            where: {
+              orderId: order.id,
+              id: { notIn: Array.from(sentIds) },
+            },
+            orderBy: { seq: "asc" },
           });
-          for (const e of events) {
+
+          for (const e of newEvents) {
             if (!sentIds.has(e.id)) {
               sentIds.add(e.id);
               send("execution", toEventVM(e));
             }
           }
         } catch {
-          /* keep polling */
+          /* keep polling on error */
         }
-        if (!closed) timer = setTimeout(poll, 300);
+        if (!closed) {
+          pollTimer = setTimeout(poll, 400);
+        }
       };
 
-      let timer: ReturnType<typeof setTimeout> = setTimeout(poll, 300);
+      pollTimer = setTimeout(poll, 400);
 
-      // Periodic ping every 15s
-      const pingInterval = setInterval(() => {
+      // Periodic ping every 15s to keep connection alive
+      pingInterval = setInterval(() => {
         if (closed) {
-          clearInterval(pingInterval);
+          cleanup();
           return;
         }
         send("ping", { time: Date.now() });
       }, 15_000);
     },
     cancel() {
-      closed = true;
+      cleanup();
     },
   });
 

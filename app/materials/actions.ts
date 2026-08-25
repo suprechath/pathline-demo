@@ -4,6 +4,8 @@ import { MaterialType, ShelfLifeUom } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { materialSchema } from "@/lib/domain/validation";
 
+import { formatBatchlineErrorDetail } from "@/lib/batchline/errors";
+
 const BATCHLINE_API_KEY = process.env.BATCHLINE_API_KEY ?? "";
 const BATCHLINE_MATERIAL_API_URL =
   process.env.BATCHLINE_MATERIAL_API_URL ??
@@ -147,11 +149,7 @@ export async function createMaterial(form: FormData): Promise<ActionResult> {
   // 3. Rollback prisma.material if API call failed
   if (!isSuccess) {
     await prisma.material.delete({ where: { id: created.id } });
-    const errorDetail =
-      responseData?.message ||
-      responseData?.error ||
-      responseData?.detail ||
-      `HTTP ${responseStatus}`;
+    const errorDetail = formatBatchlineErrorDetail(responseData, responseStatus);
     return {
       ok: false,
       message: `Batchline creation failed (${errorDetail}). Database record rolled back.`,

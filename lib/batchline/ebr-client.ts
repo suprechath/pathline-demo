@@ -5,6 +5,8 @@ const BATCHLINE_INSTRUCTION_UPDATE_BASE_URL =
   process.env.BATCHLINE_INSTRUCTION_UPDATE_API_URL ??
   "https://batch-demo.bl-client.com/api/v1/batch/instruction/update";
 
+import { formatBatchlineErrorDetail } from "./errors";
+
 export interface EbrCall {
   endpoint: string;
   method: string;
@@ -15,23 +17,7 @@ export interface EbrCall {
   errorDetail?: string;
 }
 
-export function extractEbrErrorDetail(data: unknown, fallbackStatus?: number): string {
-  if (typeof data === "string" && data.trim()) return data;
-  if (typeof data === "object" && data !== null) {
-    const obj = data as Record<string, any>;
-    if (typeof obj.error === "object" && obj.error !== null) {
-      const errObj = obj.error as Record<string, any>;
-      if (typeof errObj.detail === "string" && errObj.detail.trim()) return errObj.detail;
-      if (typeof errObj.message === "string" && errObj.message.trim()) return errObj.message;
-      if (typeof errObj.title === "string" && errObj.title.trim()) return errObj.title;
-    }
-    if (typeof obj.detail === "string" && obj.detail.trim()) return obj.detail;
-    if (typeof obj.message === "string" && obj.message.trim()) return obj.message;
-    if (typeof obj.error === "string" && obj.error.trim()) return obj.error;
-    if (typeof obj.status === "string" && obj.status.trim()) return obj.status;
-  }
-  return fallbackStatus ? `HTTP ${fallbackStatus}` : "Unknown error";
-}
+export const extractEbrErrorDetail = formatBatchlineErrorDetail;
 
 // Return a disposition and recorded measured value for a hold point back to Batchline EBR
 // Endpoint: https://batch-demo.bl-client.com/api/v1/batch/instruction/update/[gate_step]
