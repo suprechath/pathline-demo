@@ -84,6 +84,7 @@ export interface EventVM {
   hasException: boolean;
   exceptionLevel: string | null;
   batchStatus: OrderStatus | null;
+  createdAt?: string;
 }
 
 export interface OrderIntegrationErrorVM {

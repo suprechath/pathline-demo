@@ -127,5 +127,6 @@ export function toEventVM(e: ExecutionEvent): EventVM {
     hasException: e.hasException,
     exceptionLevel: e.exceptionLevel,
     batchStatus: e.batchStatus,
+    createdAt: e.createdAt ? e.createdAt.toISOString() : new Date().toISOString(),
   };
 }
