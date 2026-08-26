@@ -13,11 +13,18 @@ const PILL: Record<HoldVM["status"], { label: string; bg: string; fg: string }> 
   FAILED: { label: "Failed", bg: "#f6dcda", fg: "#c23934" },
 };
 
-function evalVerdict(spec: HoldVM["spec"], v: number): "pass" | "fail" | "empty" {
-  if (Number.isNaN(v)) return "empty";
-  if (spec.limitType === "MAX") return spec.upper != null && v <= spec.upper ? "pass" : "fail";
-  if (spec.limitType === "MIN") return spec.lower != null && v >= spec.lower ? "pass" : "fail";
-  return spec.lower != null && spec.upper != null && v >= spec.lower && v <= spec.upper ? "pass" : "fail";
+function evalVerdict(spec: HoldVM["spec"], v: string | number): "pass" | "fail" | "empty" {
+  if (spec.limitType === "OPTIONS") {
+    const s = String(v).trim();
+    if (!s) return "empty";
+    const exp = spec.expectedValue?.trim().toLowerCase();
+    return exp && s.toLowerCase() === exp ? "pass" : "fail";
+  }
+  const n = typeof v === "number" ? v : parseFloat(String(v));
+  if (Number.isNaN(n) || String(v).trim() === "") return "empty";
+  if (spec.limitType === "MAX") return spec.upper != null && n <= spec.upper ? "pass" : "fail";
+  if (spec.limitType === "MIN") return spec.lower != null && n >= spec.lower ? "pass" : "fail";
+  return spec.lower != null && spec.upper != null && n >= spec.lower && n <= spec.upper ? "pass" : "fail";
 }
 
 const Arrow = () => (
@@ -128,7 +135,9 @@ function testName(h: HoldVM) {
   return h.spec.method.startsWith("TM-BU") ? "Blend Uniformity (RSD)"
     : h.spec.method.startsWith("TM-PH") ? "pH"
     : h.spec.method.startsWith("TM-LOD") ? "Moisture (LOD)"
-    : h.spec.method.startsWith("TM-ASSAY") ? "Assay (HPLC)" : h.spec.parameter;
+    : h.spec.method.startsWith("TM-ASSAY") ? "Assay (HPLC)"
+    : h.spec.method.startsWith("TM-REL") ? "Final Batch Release"
+    : h.spec.parameter;
 }
 
 function Node({ color, text }: { color: string; text: React.ReactNode }) {
@@ -142,13 +151,29 @@ function Drawer({ hold, pending, onClose, run }: {
   hold: HoldVM; pending: boolean; onClose: () => void;
   run: (fn: () => Promise<{ ok: boolean; message: string; system?: "pathline" | "batchline" }>, close?: boolean) => void;
 }) {
-  const [val, setVal] = useState(hold.result ? String(hold.result.measuredValue) : "");
+  const isOptions = hold.spec.limitType === "OPTIONS";
+  const [val, setVal] = useState(
+    hold.result
+      ? hold.result.measuredText ?? (hold.result.measuredValue != null ? String(hold.result.measuredValue) : "")
+      : ""
+  );
   const done = hold.status === "RELEASED" || hold.status === "FAILED";
   const measuredName = hold.result?.measuredName ?? defaultMeasured(hold);
   const p = PILL[hold.status];
-  const ev = evalVerdict(hold.spec, parseFloat(val));
-  const verdict = ev === "empty" ? { label: "Awaiting entry", bg: "#eef0f5", fg: "#8b93a6" } : ev === "pass" ? { label: "In spec", bg: "#d9ede2", fg: "#1f7a4d" } : { label: "Out of spec", bg: "#f6dcda", fg: "#c23934" };
+  const ev = evalVerdict(hold.spec, val);
+  const verdict =
+    ev === "empty"
+      ? { label: "Awaiting entry", bg: "#eef0f5", fg: "#8b93a6" }
+      : ev === "pass"
+      ? { label: "In spec", bg: "#d9ede2", fg: "#1f7a4d" }
+      : { label: "Out of spec", bg: "#f6dcda", fg: "#c23934" };
   const canRecord = ev !== "empty";
+
+  const optionsList = isOptions
+    ? hold.spec.options && hold.spec.options.length > 0
+      ? hold.spec.options
+      : ["Released", "Rejected"]
+    : [];
 
   return (
     <div onClick={onClose} className="fixed inset-0 z-[60] flex justify-end bg-[rgba(28,34,48,.4)] backdrop-blur-[2px]">
@@ -189,13 +214,51 @@ function Drawer({ hold, pending, onClose, run }: {
                     <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold" style={{ background: verdict.bg, color: verdict.fg }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: verdict.fg }} />{verdict.label}</span>
                   </div>
                   <div className="text-[12.5px] text-[#3a4256]">{measuredName}</div>
-                  <div className="mt-2 flex items-center gap-2.5">
-                    <input value={val} onChange={(e) => setVal(e.target.value)} inputMode="decimal" placeholder="0.0"
-                      className="w-[120px] rounded-lg border-[1.5px] px-[11px] py-2.5 text-right font-mono text-[14px] text-[#1c2230] focus:border-[#7c4dff] focus:outline-none"
-                      style={{ borderColor: ev === "pass" ? "#a9d9bf" : ev === "fail" ? "#e6a49d" : "#dfe3ee", background: ev === "pass" ? "#f4fbf7" : ev === "fail" ? "#fdf3f2" : "#fff" }} />
-                    <span className="font-mono text-[12px] text-[#9aa2b2]">{hold.spec.unit}</span>
-                    <Mark ev={ev} />
-                  </div>
+                  
+                  {isOptions ? (
+                    <div className="mt-3 flex flex-wrap gap-2 items-center">
+                      {optionsList.map((opt) => {
+                        const isSel = val.trim().toLowerCase() === opt.trim().toLowerCase();
+                        const optEv = evalVerdict(hold.spec, opt);
+                        const activeColor =
+                          optEv === "pass"
+                            ? { border: "#1f7a4d", bg: "#eaf6f0", text: "#1f7a4d" }
+                            : { border: "#c23934", bg: "#fdf2f1", text: "#c23934" };
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setVal(opt)}
+                            className={`flex items-center gap-1.5 rounded-lg border-[1.5px] px-3.5 py-2 text-[13px] font-semibold transition-all ${
+                              isSel ? "shadow-sm" : "border-[#dfe3ee] bg-white text-[#4a5568] hover:bg-[#f7f8fb]"
+                            }`}
+                            style={
+                              isSel
+                                ? { borderColor: activeColor.border, backgroundColor: activeColor.bg, color: activeColor.text }
+                                : undefined
+                            }
+                          >
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: isSel ? activeColor.text : "#a0aec0" }}
+                            />
+                            {opt}
+                          </button>
+                        );
+                      })}
+                      <div className="ml-auto flex items-center">
+                        <Mark ev={ev} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 flex items-center gap-2.5">
+                      <input value={val} onChange={(e) => setVal(e.target.value)} inputMode="decimal" placeholder="0.0"
+                        className="w-[120px] rounded-lg border-[1.5px] px-[11px] py-2.5 text-right font-mono text-[14px] text-[#1c2230] focus:border-[#7c4dff] focus:outline-none"
+                        style={{ borderColor: ev === "pass" ? "#a9d9bf" : ev === "fail" ? "#e6a49d" : "#dfe3ee", background: ev === "pass" ? "#f4fbf7" : ev === "fail" ? "#fdf3f2" : "#fff" }} />
+                      <span className="font-mono text-[12px] text-[#9aa2b2]">{hold.spec.unit}</span>
+                      <Mark ev={ev} />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -205,7 +268,12 @@ function Drawer({ hold, pending, onClose, run }: {
               </div>
 
               <button
-                onClick={() => run(() => recordResult({ sampleId: hold.sampleId, measuredName, measuredValue: parseFloat(val) }), true)}
+                onClick={() => run(() => recordResult({
+                  sampleId: hold.sampleId,
+                  measuredName,
+                  measuredText: isOptions ? val : undefined,
+                  measuredValue: isOptions ? undefined : parseFloat(val),
+                }), true)}
                 disabled={pending || !canRecord}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-[10px] py-3 text-[13.5px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ background: "#7c4dff" }}
@@ -239,8 +307,8 @@ function Drawer({ hold, pending, onClose, run }: {
                   </div>
                   <div className="flex items-center gap-2.5 py-2">
                     <div className="flex-1 text-[12.5px] text-[#3a4256]">{hold.result.measuredName}</div>
-                    <span className="font-mono text-[14px] font-semibold text-[#1c2230]">{hold.result.measuredValue}</span>
-                    <span className="font-mono text-[12px] text-[#9aa2b2]">{hold.spec.unit}</span>
+                    <span className="font-mono text-[14px] font-semibold text-[#1c2230]">{hold.result.measuredText ?? hold.result.measuredValue}</span>
+                    {hold.spec.unit && <span className="font-mono text-[12px] text-[#9aa2b2]">{hold.spec.unit}</span>}
                     <Mark ev={hold.result.verdict === "PASS" ? "pass" : "fail"} />
                   </div>
                   <div className="mt-1 border-t border-[#eef0f5] pt-2 font-mono text-[10.5px] text-[#b0a084]">by {hold.result.recordedBy} · {hold.result.recordedAt}</div>
@@ -255,6 +323,7 @@ function Drawer({ hold, pending, onClose, run }: {
 }
 
 function defaultMeasured(h: HoldVM) {
+  if (h.spec.limitType === "OPTIONS") return "Disposition";
   return h.spec.method.startsWith("TM-BU") ? "Relative std. deviation"
     : h.spec.method.startsWith("TM-PH") ? "Measured pH"
     : h.spec.method.startsWith("TM-LOD") ? "Loss on drying"

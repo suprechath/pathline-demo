@@ -16,24 +16,35 @@ export interface DynamicSpecInput {
   testName?: string;
   test_name?: string;
   parameter?: string;
-  limitType?: "MAX" | "MIN" | "RANGE";
-  limit_type?: "MAX" | "MIN" | "RANGE";
+  limitType?: "MAX" | "MIN" | "RANGE" | "OPTIONS";
+  limit_type?: "MAX" | "MIN" | "RANGE" | "OPTIONS";
   lower?: number | null;
   upper?: number | null;
   unit?: string;
   limitText?: string;
   limit_text?: string;
+  expectedValue?: string;
+  expected_value?: string;
+  options?: string[] | string;
 }
 
-// EBR → LIMS: a hold point request arrives. Persisted against a stored spec or dynamic payload.
-export async function receiveHoldRequest(input: {
+export interface HoldRequestInput {
   batchId: string;
   stageName: string;
   gateStep?: string;
   specCode?: string;
   specification?: DynamicSpecInput;
   ebrRequestRef?: string;
-}): Promise<ActionResult & { sampleId?: string }> {
+}
+
+export interface HoldRequestCreatedItem {
+  batchId: string;
+  gateStep?: string;
+  sampleId: string;
+}
+
+// EBR → LIMS: a hold point request arrives. Persisted against a stored spec or dynamic payload.
+export async function receiveHoldRequest(input: HoldRequestInput): Promise<ActionResult & { sampleId?: string }> {
   const specCode = input.specification?.code ?? input.specCode ?? `SPEC-${Date.now()}`;
   let spec = await prisma.qcSpecification.findUnique({ where: { code: specCode } });
 
@@ -43,18 +54,58 @@ export async function receiveHoldRequest(input: {
     const parameter = s.parameter ?? s.testName ?? s.test_name ?? "In-process IPC limit";
     const lower = s.lower != null ? Number(s.lower) : null;
     const upper = s.upper != null ? Number(s.upper) : null;
-    const limitType = (s.limitType ?? s.limit_type ?? (lower != null && upper != null ? "RANGE" : upper != null ? "MAX" : "MIN")) as "MAX" | "MIN" | "RANGE";
-    const unit = s.unit ?? "";
+    const optionsRaw = s.options;
+    const optionsStr = Array.isArray(optionsRaw)
+      ? optionsRaw.map((x) => String(x).trim()).join(",")
+      : typeof optionsRaw === "string"
+      ? optionsRaw
+      : undefined;
+
+    const expectedValue = s.expectedValue ?? s.expected_value ?? (optionsStr ? optionsStr.split(",")[0]?.trim() : undefined);
+    const isOptions =
+      s.limitType === "OPTIONS" ||
+      s.limit_type === "OPTIONS" ||
+      Boolean(optionsStr) ||
+      Boolean(expectedValue && lower == null && upper == null);
+
+    const limitType = (s.limitType ?? s.limit_type ?? (isOptions ? "OPTIONS" : lower != null && upper != null ? "RANGE" : upper != null ? "MAX" : "MIN")) as "MAX" | "MIN" | "RANGE" | "OPTIONS";
+    const unit = isOptions ? "" : (s.unit ?? "");
+
     const limitText = s.limitText ?? s.limit_text ?? (
-      limitType === "RANGE" ? `${lower} – ${upper} ${unit}`.trim() :
-        limitType === "MAX" ? `≤ ${upper} ${unit}`.trim() :
-          `≥ ${lower} ${unit}`.trim()
+      limitType === "OPTIONS"
+        ? (optionsStr ? `Must be '${expectedValue ?? "Released"}' (${optionsStr})` : `Must be '${expectedValue ?? "Released"}'`)
+        : limitType === "RANGE"
+        ? `${lower} – ${upper} ${unit}`.trim()
+        : limitType === "MAX"
+        ? `≤ ${upper} ${unit}`.trim()
+        : `≥ ${lower} ${unit}`.trim()
     );
 
     spec = await prisma.qcSpecification.upsert({
       where: { code: specCode },
-      create: { code: specCode, testName, parameter, limitType, lower, upper, unit, limitText },
-      update: { testName, parameter, limitType, lower, upper, unit, limitText },
+      create: {
+        code: specCode,
+        testName,
+        parameter,
+        limitType,
+        lower: isOptions ? null : lower,
+        upper: isOptions ? null : upper,
+        unit,
+        limitText,
+        expectedValue: expectedValue ?? null,
+        options: optionsStr ?? (isOptions ? (expectedValue ? `${expectedValue},Rejected` : "Released,Rejected") : null),
+      },
+      update: {
+        testName,
+        parameter,
+        limitType,
+        lower: isOptions ? null : lower,
+        upper: isOptions ? null : upper,
+        unit,
+        limitText,
+        expectedValue: expectedValue ?? null,
+        options: optionsStr ?? (isOptions ? (expectedValue ? `${expectedValue},Rejected` : "Released,Rejected") : null),
+      },
     });
   }
 
@@ -101,6 +152,83 @@ export async function receiveHoldRequest(input: {
   return { ok: true, message: "New sample request received from Batchline EBR", system: "batchline", sampleId: hp.sampleId };
 }
 
+// EBR → LIMS: multiple hold point requests arrive in a single batch.
+export async function receiveHoldRequests(
+  inputs: HoldRequestInput[]
+): Promise<ActionResult & { sampleIds?: string[]; results?: HoldRequestCreatedItem[] }> {
+  if (inputs.length === 0) {
+    return { ok: false, message: "No hold point requests provided", system: "batchline" };
+  }
+
+  // Pre-validate in-batch duplicate gate_step for the same batchId
+  const seenKeys = new Set<string>();
+  for (const input of inputs) {
+    const key = `${input.batchId.trim()}::${input.gateStep?.trim() ?? ""}`.toLowerCase();
+    if (seenKeys.has(key)) {
+      const gateLabel = input.gateStep?.trim() ? `'${input.gateStep.trim()}'` : "empty gate step";
+      return {
+        ok: false,
+        message: `Duplicate hold request in payload: Gate step ${gateLabel} for batch '${input.batchId}' is repeated`,
+        system: "batchline",
+      };
+    }
+    seenKeys.add(key);
+  }
+
+  // Pre-validate against existing database records
+  for (const input of inputs) {
+    const gateStepCondition = input.gateStep?.trim()
+      ? { equals: input.gateStep.trim(), mode: "insensitive" as const }
+      : null;
+
+    const existingHold = await prisma.holdPoint.findFirst({
+      where: {
+        batchId: input.batchId,
+        gateStep: gateStepCondition,
+      },
+      select: {
+        sampleId: true,
+        status: true,
+        gateStep: true,
+      },
+    });
+
+    if (existingHold) {
+      const gateLabel = existingHold.gateStep ? `'${existingHold.gateStep}'` : "empty/unspecified gate step";
+      return {
+        ok: false,
+        message: `Hold request rejected: Gate step ${gateLabel} for batch '${input.batchId}' already exists in LIMS (Sample: ${existingHold.sampleId}, Status: ${existingHold.status})`,
+        system: "batchline",
+      };
+    }
+  }
+
+  // Process and create each hold point
+  const created: HoldRequestCreatedItem[] = [];
+  for (const input of inputs) {
+    const res = await receiveHoldRequest(input);
+    if (!res.ok) {
+      return res;
+    }
+    if (res.sampleId) {
+      created.push({
+        batchId: input.batchId,
+        gateStep: input.gateStep,
+        sampleId: res.sampleId,
+      });
+    }
+  }
+
+  revalidatePath("/lims");
+  return {
+    ok: true,
+    message: `Received ${created.length} sample request(s) from Batchline EBR`,
+    system: "batchline",
+    sampleIds: created.map((c) => c.sampleId),
+    results: created,
+  };
+}
+
 // Log receipt of the physical sample → testing may begin.
 export async function receiveSample(sampleId: string): Promise<ActionResult> {
   const hp = await prisma.holdPoint.findUnique({ where: { sampleId } });
@@ -116,25 +244,49 @@ export async function receiveSample(sampleId: string): Promise<ActionResult> {
 export async function recordResult(input: {
   sampleId: string;
   measuredName: string;
-  measuredValue: number;
+  measuredValue?: number | null;
+  measuredText?: string | null;
   recordedBy?: string;
 }): Promise<ActionResult> {
   const hp = await prisma.holdPoint.findUnique({ where: { sampleId: input.sampleId }, include: { specification: true } });
   if (!hp) return { ok: false, message: "Hold point not found", system: "pathline" };
   if (hp.status === "RELEASED" || hp.status === "FAILED") return { ok: false, message: "Already dispositioned", system: "pathline" };
-  if (Number.isNaN(input.measuredValue)) return { ok: false, message: "Enter a numeric value", system: "pathline" };
 
   const spec = hp.specification;
+  const isOptions = spec.limitType === "OPTIONS";
+
+  let recordedValueToSend: number | string;
+  let numVal: number | null = null;
+  let textVal: string | null = null;
+
+  if (isOptions) {
+    textVal = input.measuredText?.trim() ?? (input.measuredValue != null ? String(input.measuredValue).trim() : "");
+    if (!textVal) return { ok: false, message: "Select an option for result", system: "pathline" };
+    recordedValueToSend = textVal;
+  } else {
+    if (input.measuredValue == null || Number.isNaN(input.measuredValue)) {
+      return { ok: false, message: "Enter a numeric value", system: "pathline" };
+    }
+    numVal = input.measuredValue;
+    textVal = String(input.measuredValue);
+    recordedValueToSend = input.measuredValue;
+  }
+
   const verdict = evalVerdict(
-    { limitType: spec.limitType, lower: spec.lower == null ? null : Number(spec.lower), upper: spec.upper == null ? null : Number(spec.upper) },
-    input.measuredValue,
+    {
+      limitType: spec.limitType,
+      lower: spec.lower == null ? null : Number(spec.lower),
+      upper: spec.upper == null ? null : Number(spec.upper),
+      expectedValue: spec.expectedValue,
+    },
+    isOptions ? (textVal ?? "") : (numVal ?? 0),
   );
 
   const ebr = await returnDisposition({
     batchId: hp.batchId,
     sampleId: hp.sampleId,
     gateStep: hp.gateStep,
-    measuredValue: input.measuredValue,
+    measuredValue: recordedValueToSend,
     verdict,
   });
 
@@ -152,7 +304,8 @@ export async function recordResult(input: {
       data: {
         holdPointId: hp.id,
         measuredName: input.measuredName,
-        measuredValue: input.measuredValue,
+        measuredValue: numVal,
+        measuredText: textVal,
         verdict,
         recordedBy: input.recordedBy ?? "analyst",
         dispositionSentAt: new Date(),

@@ -179,6 +179,9 @@ async function main() {
   const assay = await prisma.qcSpecification.create({
     data: { code: "TM-ASSAY-014", testName: "Assay (HPLC)", parameter: "Assay of active", limitType: "RANGE", lower: S(95.0), upper: S(105.0), unit: "%", limitText: "95.0 – 105.0 %" },
   });
+  const relSpec = await prisma.qcSpecification.create({
+    data: { code: "TM-REL-001", testName: "Final Batch Disposition", parameter: "QA Release Approval", limitType: "OPTIONS", expectedValue: "Released", options: "Released,Rejected", unit: "", limitText: "Must be 'Released' (Released,Rejected)" },
+  });
 
   // ── hold points in a spread of states ───────────────────────────
   await prisma.holdPoint.create({
@@ -189,6 +192,9 @@ async function main() {
   });
   await prisma.holdPoint.create({
     data: { sampleId: "IPC-26-0428", batchId: "PARA-BLEND_8", stageName: "Drying", gateStep: "Release to blending", ebrRequestRef: "EBR-REQ-8994", status: "AWAITING_RESULT", specificationId: lod.id },
+  });
+  await prisma.holdPoint.create({
+    data: { sampleId: "IPC-26-0429", batchId: "PARA-500_15", stageName: "Packaging", gateStep: "Final Batch Release", ebrRequestRef: "EBR-REQ-8995", status: "AWAITING_RESULT", specificationId: relSpec.id },
   });
   
   // A released (pass) hold with its recorded result.

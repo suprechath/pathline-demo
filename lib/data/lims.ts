@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
-import type { Prisma, ResultVerdict } from ".prisma/lims-client";
+import type { Prisma, ResultVerdict } from "@prisma/client";
 
 const num = (d: Prisma.Decimal | null) => (d == null ? null : Number(d));
 
@@ -9,14 +9,17 @@ export interface SpecVM {
   limitText: string;
   method: string;
   unit: string;
-  limitType: "MAX" | "MIN" | "RANGE";
+  limitType: "MAX" | "MIN" | "RANGE" | "OPTIONS";
   lower: number | null;
   upper: number | null;
+  expectedValue: string | null;
+  options: string[] | null;
 }
 
 export interface ResultVM {
   measuredName: string;
-  measuredValue: number;
+  measuredValue: number | null;
+  measuredText: string | null;
   verdict: ResultVerdict;
   recordedBy: string | null;
   recordedAt: string;
@@ -43,6 +46,7 @@ const hhmm = (d: Date) => d.toISOString().slice(11, 16);
 function toHoldVM(h: FullHold): HoldVM {
   const s = h.specification;
   const r = h.results[0] ?? null;
+  const options = s.options ? s.options.split(",").map((o) => o.trim()).filter(Boolean) : null;
   return {
     id: h.id,
     sampleId: h.sampleId,
@@ -59,25 +63,40 @@ function toHoldVM(h: FullHold): HoldVM {
       limitType: s.limitType,
       lower: num(s.lower),
       upper: num(s.upper),
+      expectedValue: s.expectedValue ?? null,
+      options,
     },
     result: r
       ? {
-          measuredName: r.measuredName,
-          measuredValue: Number(r.measuredValue),
-          verdict: r.verdict,
-          recordedBy: r.recordedBy,
-          recordedAt: r.recordedAt.toISOString().slice(0, 16).replace("T", " "),
-          dispositionSentAt: r.dispositionSentAt ? r.dispositionSentAt.toISOString().slice(0, 16).replace("T", " ") : null,
-        }
+        measuredName: r.measuredName,
+        measuredValue: r.measuredValue != null ? Number(r.measuredValue) : null,
+        measuredText: r.measuredText ?? (r.measuredValue != null ? String(r.measuredValue) : null),
+        verdict: r.verdict,
+        recordedBy: r.recordedBy,
+        recordedAt: r.recordedAt.toISOString().slice(0, 16).replace("T", " "),
+        dispositionSentAt: r.dispositionSentAt ? r.dispositionSentAt.toISOString().slice(0, 16).replace("T", " ") : null,
+      }
       : null,
   };
 }
 
 // Evaluate a measured value against a specification → PASS / OOS.
-export function evalVerdict(spec: Pick<SpecVM, "limitType" | "lower" | "upper">, value: number): ResultVerdict {
-  if (spec.limitType === "MAX") return spec.upper != null && value <= spec.upper ? "PASS" : "OOS";
-  if (spec.limitType === "MIN") return spec.lower != null && value >= spec.lower ? "PASS" : "OOS";
-  return spec.lower != null && spec.upper != null && value >= spec.lower && value <= spec.upper ? "PASS" : "OOS";
+export function evalVerdict(
+  spec: Pick<SpecVM, "limitType" | "lower" | "upper" | "expectedValue">,
+  value: number | string
+): ResultVerdict {
+  if (spec.limitType === "OPTIONS") {
+    const exp = spec.expectedValue?.trim().toLowerCase();
+    const actual = String(value).trim().toLowerCase();
+    return exp && actual === exp ? "PASS" : "OOS";
+  }
+
+  const numVal = typeof value === "number" ? value : parseFloat(value);
+  if (Number.isNaN(numVal)) return "OOS";
+
+  if (spec.limitType === "MAX") return spec.upper != null && numVal <= spec.upper ? "PASS" : "OOS";
+  if (spec.limitType === "MIN") return spec.lower != null && numVal >= spec.lower ? "PASS" : "OOS";
+  return spec.lower != null && spec.upper != null && numVal >= spec.lower && numVal <= spec.upper ? "PASS" : "OOS";
 }
 
 export async function getHoldPoints(): Promise<HoldVM[]> {

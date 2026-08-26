@@ -455,6 +455,7 @@ enum LimitType {
   MAX // value must be ≤ upper
   MIN // value must be ≥ lower
   RANGE // lower ≤ value ≤ upper
+  OPTIONS // discrete option match, e.g. "Released", "Rejected"
 }
 
 // Computed verdict of a recorded result against its specification.
@@ -469,15 +470,17 @@ enum ResultVerdict {
 //   payload (or a LIMS-local master) — not linked to any ERP material.
 // ─────────────────────────────────────────────────────────────
 model QcSpecification {
-  id        String    @id @default(cuid())
-  code      String    @unique // e.g. "TM-BU-007" method/spec reference
-  testName  String // e.g. "Blend Uniformity (RSD)"
-  parameter String // e.g. "RSD of 10 sample locations"
-  limitType LimitType
-  lower     Decimal?  @db.Decimal(15, 6) // used by MIN / RANGE
-  upper     Decimal?  @db.Decimal(15, 6) // used by MAX / RANGE
-  unit      String    @default("") // "%", "" for unitless, etc.
-  limitText String // human-readable, e.g. "RSD ≤ 5.0 %"
+  id            String    @id @default(cuid())
+  code          String    @unique // e.g. "TM-BU-007" method/spec reference
+  testName      String // e.g. "Blend Uniformity (RSD)"
+  parameter     String // e.g. "RSD of 10 sample locations"
+  limitType     LimitType
+  lower         Decimal?  @db.Decimal(15, 6) // used by MIN / RANGE
+  upper         Decimal?  @db.Decimal(15, 6) // used by MAX / RANGE
+  unit          String    @default("") // "%", "" for unitless, etc.
+  limitText     String // human-readable, e.g. "RSD ≤ 5.0 %"
+  expectedValue String? // used by OPTIONS, e.g. "Released"
+  options       String? // comma-separated choices, e.g. "Released,Rejected"
 
   holdPoints HoldPoint[]
 
@@ -529,7 +532,8 @@ model HoldPoint {
 model QcResult {
   id            String        @id @default(cuid())
   measuredName  String // e.g. "Relative std. deviation"
-  measuredValue Decimal       @db.Decimal(15, 6)
+  measuredValue Decimal?      @db.Decimal(15, 6)
+  measuredText  String? // string value for qualitative/options, e.g. "Released"
   verdict       ResultVerdict
   recordedBy    String? // analyst name/id captured at entry
   recordedAt    DateTime      @default(now())
